@@ -14,7 +14,7 @@ A Rust library and CLI tool for running shell commands with a live spinner, elap
 - **Interrupt detection** — commands killed by a signal show `INTERRUPTED` instead of ✓/✘
 - **Validator command** — a `-v / --validator <cmd>` flag on the CLI runs a second shell command after the main one; its exit code determines overall pass/fail (overrides the main command's status, unless the main command timed out or was interrupted)
 - **Exit-code propagation** — the `x` CLI exits with the underlying command's actual exit code (e.g. `exit 42` → `x` exits 42), `124` on timeout, and `128 + signal` on signal-kill (Unix)
-- **Builder API** — chain `.message()`, `.timeout()`, `.success()`, `.quiet()`, and `.log()` before calling `.run()`
+- **Builder API** — chain `.message()`, `.timeout()`, `.success()`, `.quiet()`, and `.log()` before calling a terminal method: `.run()` (bool), `.run_status()` (`RunStatus`), `.run_report()` (`RunReport` — status + exit code), `.run_succinct_report()` (inherited stdio, no wrapper), or `.run_capture()` (silent, returns `CommandOutput`)
 
 ## CLI Usage
 
@@ -57,7 +57,7 @@ The `--log` option appends a timestamped entry to the specified file after each 
 
 When `--quiet` is used, successful commands omit the tabulated output. Failed or interrupted commands always include output.
 
-When `--succinct` is used, the bracketed wrapper line and the spinner are suppressed entirely; the child's stdout and stderr stream live to the terminal (no capture, no leading-tab indentation). With `--log`, an entry is still written for the run with the timestamp, status icon, elapsed time, and message — but no tabulated output body, since succinct mode does not capture output. `--quiet` and `--verbose` have no effect in succinct mode.
+When `--succinct` is used, the bracketed wrapper line and the spinner are suppressed entirely; the child's stdout and stderr stream live to the terminal (no capture, no leading-tab indentation). Since no `[ ✓ ]`/`[ ✘ ]` marker is shown, callers should rely on `x`'s exit code to detect failure. With `--log`, an entry is still written for the run with the timestamp, status icon, elapsed time, and message — but no tabulated output body, since succinct mode does not capture output. `--quiet` and `--verbose` have no effect in succinct mode.
 
 `x` exits with the underlying command's actual exit code, so e.g. `x "exit 42"` exits 42. On timeout `x` exits `124` (matching the Unix `timeout` convention); on signal-kill (Unix) `x` exits `128 + signal_number` (POSIX shell convention; SIGINT → 130, SIGTERM → 143). When `-v / --validator` is supplied, the validator's exit code propagates instead of the main command's.
 
@@ -97,6 +97,15 @@ execute("cargo build --release")
     .quiet()
     .log("build.log")
     .run();
+
+// Get the actual exit code (not just success/failure)
+use shell_executor::{RunStatus, execute};
+let report = execute("exit 42").run_report();
+assert_eq!(report.exit_code, 42);
+assert_eq!(report.status, RunStatus::Failure);
+
+// Stream output directly with no spinner / wrapper
+execute("cargo build").run_succinct_report();
 ```
 
 ## Running the Demo
