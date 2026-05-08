@@ -80,6 +80,24 @@ pub struct RunReport {
     pub exit_code: i32,
 }
 
+/// Print a bare success label `[ ✓ ] msg` to stdout.
+///
+/// Useful for reporting the outcome of in-process work that did not run a
+/// shell command (so [`execute`] is not applicable). The label uses the same
+/// visual style as the wrapper printed by [`ShellCommand::run`], minus the
+/// elapsed-time slot.
+pub fn pass(msg: &str) {
+    println!("[ \x1b[32m✓\x1b[0m ] {msg}");
+}
+
+/// Print a bare failure label `[ ✘ ] msg` to stdout.
+///
+/// Counterpart to [`pass`]. Useful for surfacing in-process errors with the
+/// same visual style as a failed [`ShellCommand::run`].
+pub fn fail(msg: &str) {
+    println!("[ \x1b[31m✘\x1b[0m ] {msg}");
+}
+
 /// Create a new [`ShellCommand`] for the given shell expression.
 ///
 /// This is the primary entry point for the crate. The command string is
@@ -982,6 +1000,16 @@ mod tests {
             "succinct log file should not contain ESC (0x1b) ANSI codes"
         );
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn pass_does_not_panic() {
+        pass("test message");
+    }
+
+    #[test]
+    fn fail_does_not_panic() {
+        fail("test message");
     }
 
     #[cfg(unix)]

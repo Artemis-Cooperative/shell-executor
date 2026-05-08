@@ -15,6 +15,7 @@ A Rust library and CLI tool for running shell commands with a live spinner, elap
 - **Validator command** — a `-v / --validator <cmd>` flag on the CLI runs a second shell command after the main one; its exit code determines overall pass/fail (overrides the main command's status, unless the main command timed out or was interrupted)
 - **Exit-code propagation** — the `x` CLI exits with the underlying command's actual exit code (e.g. `exit 42` → `x` exits 42), `124` on timeout, and `128 + signal` on signal-kill (Unix)
 - **Builder API** — chain `.message()`, `.timeout()`, `.success()`, `.quiet()`, and `.log()` before calling a terminal method: `.run()` (bool), `.run_status()` (`RunStatus`), `.run_report()` (`RunReport` — status + exit code), `.run_succinct_report()` (inherited stdio, no wrapper), or `.run_capture()` (silent, returns `CommandOutput`)
+- **Bare-label printers** — `pass(msg)` and `fail(msg)` emit `[ ✓ ] msg` / `[ ✘ ] msg` for reporting the outcome of in-process work where there is no shell command to wrap
 
 ## CLI Usage
 
@@ -106,6 +107,11 @@ assert_eq!(report.status, RunStatus::Failure);
 
 // Stream output directly with no spinner / wrapper
 execute("cargo build").run_succinct_report();
+
+// Print a bare-label outcome for in-process work (no command run)
+use shell_executor::{pass, fail};
+pass("working tree clean");
+fail("could not open repository");
 ```
 
 ## Running the Demo
