@@ -10,6 +10,7 @@ A Rust library and CLI tool for running shell commands with a live spinner, elap
 - **Quiet mode** — suppress output on success, only show it on failure
 - **Log file** — append timestamped execution results to a file after each command
 - **Interrupt detection** — commands killed by a signal show `INTERRUPTED` instead of ✓/✘
+- **Validator command** — a `-v / --validator <cmd>` flag on the CLI runs a second shell command after the main one; its exit code determines overall pass/fail (overrides the main command's status, unless the main command timed out or was interrupted)
 - **Builder API** — chain `.message()`, `.timeout()`, `.success()`, `.quiet()`, and `.log()` before calling `.run()`
 
 ## CLI Usage
@@ -31,6 +32,10 @@ x "cargo test" --msg "Running tests" --quiet
 
 # Log results to a file
 x "cargo build --release" --msg "Building" --log build.log
+
+# Run a validator after the main command — its exit code decides overall pass/fail
+x "cargo build" -v "cargo test"
+x "deploy.sh" --validator "curl -fsS https://example.com/health"
 ```
 
 The `--log` option appends a timestamped entry to the specified file after each execution. The file is created if it doesn't exist. Log entries look like:
@@ -99,6 +104,5 @@ cargo test
 
 Features ported from a sibling `x` tool that aren't yet implemented here:
 
-- **Validator command** — a `-v <cmd>` flag that runs a second shell command after the main one to determine pass/fail (distinct from the library's `.success()` closure, which isn't exposed on the CLI).
 - **Exit-code propagation** — preserve the command's actual exit code (e.g. `exit 42` → `x` exits 42) instead of clamping to 0/1.
 - **Succinct / verbose modes** — `--succinct` to drop the `[ ✓ … ]` wrapper entirely and pass output through, and `--verbose` to show stdout/stderr on success (inverse of `--quiet`).

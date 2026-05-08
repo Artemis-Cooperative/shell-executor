@@ -49,6 +49,26 @@ pub struct ShellCommand {
 
 const DEFAULT_MAX_OUTPUT: usize = 10 * 1024 * 1024; // 10 MB
 
+/// The terminal outcome of a [`ShellCommand::run_status`] invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunStatus {
+    /// The command completed and was judged successful.
+    Success,
+    /// The command completed but was judged a failure.
+    Failure,
+    /// The command was killed because it exceeded its timeout.
+    Timeout,
+    /// The command was terminated by a signal (Unix only).
+    Interrupted,
+}
+
+impl RunStatus {
+    /// Returns `true` if the status is [`RunStatus::Success`].
+    pub fn is_success(self) -> bool {
+        matches!(self, RunStatus::Success)
+    }
+}
+
 /// Create a new [`ShellCommand`] for the given shell expression.
 ///
 /// This is the primary entry point for the crate. The command string is
@@ -249,6 +269,14 @@ impl ShellCommand {
     /// Returns `true` if the command succeeded according to the success criteria
     /// (zero exit code by default, or the custom [`success`](ShellCommand::success) closure).
     pub fn run(self) -> bool {
+        self.run_status().is_success()
+    }
+
+    /// Execute the command and return its detailed [`RunStatus`].
+    ///
+    /// Behaves identically to [`run`](ShellCommand::run) in terms of spinner,
+    /// printing, and logging, but distinguishes between failure modes.
+    pub fn run_status(self) -> RunStatus {
         let display_message = match &self.message {
             Some(msg) => msg.clone(),
             None => {
@@ -270,7 +298,7 @@ impl ShellCommand {
             Ok(child) => child,
             Err(e) => {
                 eprintln!("Failed to spawn command: {e}");
-                return false;
+                return RunStatus::Failure;
             }
         };
 
@@ -351,7 +379,7 @@ impl ShellCommand {
             }, was_signaled)
         };
 
-        let success = if interrupted {
+        let success = if interrupted || timed_out {
             false
         } else {
             match &self.success {
@@ -413,7 +441,15 @@ impl ShellCommand {
             }
         }
 
-        success
+        if timed_out {
+            RunStatus::Timeout
+        } else if interrupted {
+            RunStatus::Interrupted
+        } else if success {
+            RunStatus::Success
+        } else {
+            RunStatus::Failure
+        }
     }
 }
 
@@ -439,6 +475,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn run_status_success_for_zero_exit() {
+        assert_eq!(execute("true").run_status(), RunStatus::Success);
+    }
+
+    #[test]
+    fn run_status_failure_for_nonzero_exit() {
+        assert_eq!(execute("false").run_status(), RunStatus::Failure);
+    }
+
+    #[test]
+    fn run_status_timeout_when_exceeded() {
+        let status = execute("sleep 10")
+            .timeout(Duration::from_millis(200))
+            .run_status();
+        assert_eq!(status, RunStatus::Timeout);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_status_interrupted_on_signal() {
+        assert_eq!(execute("kill -INT $$").run_status(), RunStatus::Interrupted);
+    }
+
+    #[test]
     fn long_command_truncation() {
         // Commands longer than 30 chars should still run without a custom message
         let result = execute("echo this is a very long command that exceeds thirty characters").run();
@@ -446,12 +506,12 @@ mod tests {
     }
 
     #[test]
-    fn timeout_produces_exit_code_124() {
+    fn timeout_overrides_custom_success_closure() {
         let result = execute("sleep 10")
             .timeout(Duration::from_millis(200))
             .success(|output| output.exit_code == 124)
             .run();
-        assert!(result);
+        assert!(!result);
     }
 
     #[test]
