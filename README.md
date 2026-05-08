@@ -8,9 +8,12 @@ A Rust library and CLI tool for running shell commands with a live spinner, elap
 - **Timeouts** — kill long-running commands after a specified duration (exit code `124`)
 - **Custom success criteria** — define a closure to determine success based on stdout, stderr, or exit code
 - **Quiet mode** — suppress output on success, only show it on failure
+- **Verbose mode** — `--verbose` makes the default "show output on success" behavior explicit (inverse of `--quiet`); the two are mutually exclusive
+- **Succinct mode** — `--succinct` drops the `[ ✓ … ]` wrapper and streams the child's stdout/stderr directly to the terminal without capture or indentation
 - **Log file** — append timestamped execution results to a file after each command
 - **Interrupt detection** — commands killed by a signal show `INTERRUPTED` instead of ✓/✘
 - **Validator command** — a `-v / --validator <cmd>` flag on the CLI runs a second shell command after the main one; its exit code determines overall pass/fail (overrides the main command's status, unless the main command timed out or was interrupted)
+- **Exit-code propagation** — the `x` CLI exits with the underlying command's actual exit code (e.g. `exit 42` → `x` exits 42), `124` on timeout, and `128 + signal` on signal-kill (Unix)
 - **Builder API** — chain `.message()`, `.timeout()`, `.success()`, `.quiet()`, and `.log()` before calling `.run()`
 
 ## CLI Usage
@@ -30,6 +33,12 @@ x "sleep 60" --timeout 5
 # Quiet mode — only print output on failure
 x "cargo test" --msg "Running tests" --quiet
 
+# Verbose mode — explicitly show output on success (default; inverse of --quiet)
+x "cargo test" --verbose
+
+# Succinct mode — drop the [ ✓ … ] wrapper and stream output directly
+x "cargo build" --succinct
+
 # Log results to a file
 x "cargo build --release" --msg "Building" --log build.log
 
@@ -48,7 +57,9 @@ The `--log` option appends a timestamped entry to the specified file after each 
 
 When `--quiet` is used, successful commands omit the tabulated output. Failed or interrupted commands always include output.
 
-Exit code is `0` on success, `1` on failure.
+When `--succinct` is used, the bracketed wrapper line and the spinner are suppressed entirely; the child's stdout and stderr stream live to the terminal (no capture, no leading-tab indentation). With `--log`, an entry is still written for the run with the timestamp, status icon, elapsed time, and message — but no tabulated output body, since succinct mode does not capture output. `--quiet` and `--verbose` have no effect in succinct mode.
+
+`x` exits with the underlying command's actual exit code, so e.g. `x "exit 42"` exits 42. On timeout `x` exits `124` (matching the Unix `timeout` convention); on signal-kill (Unix) `x` exits `128 + signal_number` (POSIX shell convention; SIGINT → 130, SIGTERM → 143). When `-v / --validator` is supplied, the validator's exit code propagates instead of the main command's.
 
 ## Library Usage
 
@@ -100,9 +111,3 @@ cargo run --example demo
 cargo test
 ```
 
-## Planned
-
-Features ported from a sibling `x` tool that aren't yet implemented here:
-
-- **Exit-code propagation** — preserve the command's actual exit code (e.g. `exit 42` → `x` exits 42) instead of clamping to 0/1.
-- **Succinct / verbose modes** — `--succinct` to drop the `[ ✓ … ]` wrapper entirely and pass output through, and `--verbose` to show stdout/stderr on success (inverse of `--quiet`).

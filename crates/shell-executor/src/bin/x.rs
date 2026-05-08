@@ -17,9 +17,17 @@ struct Cli {
     #[arg(long)]
     timeout: Option<u64>,
 
-    /// Suppress output on success
+    /// Suppress output on success (only shown on failure).
     #[arg(long, short)]
     quiet: bool,
+
+    /// Show output on success (default behavior; inverse of --quiet).
+    #[arg(long, conflicts_with = "quiet")]
+    verbose: bool,
+
+    /// Drop the [ ✓ … ] wrapper and stream output directly. Overrides --quiet/--verbose.
+    #[arg(long)]
+    succinct: bool,
 
     /// Append execution results to a log file
     #[arg(long)]
@@ -34,6 +42,7 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
+    let _ = cli.verbose;
 
     let mut cmd = execute(&cli.command);
 
@@ -45,7 +54,7 @@ fn main() {
         cmd = cmd.timeout(Duration::from_secs(secs));
     }
 
-    if cli.quiet {
+    if cli.quiet && !cli.succinct {
         cmd = cmd.quiet();
     }
 
@@ -53,23 +62,30 @@ fn main() {
         cmd = cmd.log(log_path);
     }
 
-    let status = cmd.run_status();
+    let report = if cli.succinct {
+        cmd.run_succinct_report()
+    } else {
+        cmd.run_report()
+    };
 
-    let overall_success = match (status, &cli.validator) {
-        (RunStatus::Timeout, _) | (RunStatus::Interrupted, _) => false,
-        (RunStatus::Success, None) => true,
-        (RunStatus::Failure, None) => false,
+    let final_code: i32 = match (report.status, &cli.validator) {
+        (RunStatus::Timeout, _) | (RunStatus::Interrupted, _) => report.exit_code,
+        (RunStatus::Success, None) | (RunStatus::Failure, None) => report.exit_code,
         (RunStatus::Success | RunStatus::Failure, Some(v_cmd)) => {
             let mut v = execute(v_cmd).message("Validator");
-            if cli.quiet {
+            if cli.quiet && !cli.succinct {
                 v = v.quiet();
             }
             if let Some(log_path) = &cli.log {
                 v = v.log(log_path);
             }
-            v.run()
+            if cli.succinct {
+                v.run_succinct_report().exit_code
+            } else {
+                v.run_report().exit_code
+            }
         }
     };
 
-    std::process::exit(if overall_success { 0 } else { 1 });
+    std::process::exit(final_code);
 }

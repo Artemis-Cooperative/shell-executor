@@ -69,6 +69,17 @@ impl RunStatus {
     }
 }
 
+/// Combined outcome and exit code from a [`ShellCommand::run_report`] invocation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunReport {
+    pub status: RunStatus,
+    /// The propagated exit code:
+    /// - command's real exit code on Success/Failure
+    /// - `124` on Timeout
+    /// - `128 + signal_number` on Interrupted (Unix); `1` if the signal cannot be determined or on non-Unix
+    pub exit_code: i32,
+}
+
 /// Create a new [`ShellCommand`] for the given shell expression.
 ///
 /// This is the primary entry point for the crate. The command string is
@@ -277,16 +288,16 @@ impl ShellCommand {
     /// Behaves identically to [`run`](ShellCommand::run) in terms of spinner,
     /// printing, and logging, but distinguishes between failure modes.
     pub fn run_status(self) -> RunStatus {
-        let display_message = match &self.message {
-            Some(msg) => msg.clone(),
-            None => {
-                if self.command.len() > 30 {
-                    format!("{}...", &self.command[..30])
-                } else {
-                    self.command.clone()
-                }
-            }
-        };
+        self.run_report().status
+    }
+
+    /// Execute the command and return both its [`RunStatus`] and propagated exit code.
+    ///
+    /// Behaves identically to [`run_status`](ShellCommand::run_status) in terms
+    /// of spinner, printing, and logging, but additionally surfaces the exit
+    /// code so callers can propagate it (for example, to the OS).
+    pub fn run_report(self) -> RunReport {
+        let display_message = derive_display_message(&self.message, &self.command);
 
         let mut child = match Command::new("sh")
             .arg("-c")
@@ -298,7 +309,10 @@ impl ShellCommand {
             Ok(child) => child,
             Err(e) => {
                 eprintln!("Failed to spawn command: {e}");
-                return RunStatus::Failure;
+                return RunReport {
+                    status: RunStatus::Failure,
+                    exit_code: 1,
+                };
             }
         };
 
@@ -340,19 +354,14 @@ impl ShellCommand {
             std::thread::sleep(Duration::from_millis(100));
         }
 
-        let elapsed = start.elapsed();
-        let secs = elapsed.as_secs();
-        let h = secs / 3600;
-        let m = (secs % 3600) / 60;
-        let s = secs % 60;
-        let final_time = format!("{h:02}:{m:02}:{s:02}");
+        let final_time = format_elapsed(start.elapsed());
 
-        let (output, interrupted) = if timed_out {
+        let (output, signal_num) = if timed_out {
             (CommandOutput {
                 stdout: String::new(),
                 stderr: String::new(),
                 exit_code: 124,
-            }, false)
+            }, None)
         } else {
             let stdout_str = child.stdout.take()
                 .map(|out| read_bounded(out, self.max_output))
@@ -362,11 +371,11 @@ impl ShellCommand {
                 .unwrap_or_default();
 
             let status = child.wait().ok();
-            let was_signaled = {
+            let signal_num: Option<i32> = {
                 #[cfg(unix)]
-                { status.as_ref().is_some_and(|s| s.signal().is_some()) }
+                { status.as_ref().and_then(|s| s.signal()) }
                 #[cfg(not(unix))]
-                { false }
+                { None }
             };
             let exit_code = status
                 .and_then(|s| s.code())
@@ -376,8 +385,10 @@ impl ShellCommand {
                 stdout: stdout_str,
                 stderr: stderr_str,
                 exit_code,
-            }, was_signaled)
+            }, signal_num)
         };
+
+        let interrupted = signal_num.is_some();
 
         let success = if interrupted || timed_out {
             false
@@ -441,7 +452,7 @@ impl ShellCommand {
             }
         }
 
-        if timed_out {
+        let status = if timed_out {
             RunStatus::Timeout
         } else if interrupted {
             RunStatus::Interrupted
@@ -449,8 +460,143 @@ impl ShellCommand {
             RunStatus::Success
         } else {
             RunStatus::Failure
+        };
+
+        let exit_code = match status {
+            RunStatus::Timeout => 124,
+            RunStatus::Interrupted => signal_num.map(|n| 128 + n).unwrap_or(1),
+            RunStatus::Success | RunStatus::Failure => output.exit_code,
+        };
+
+        RunReport { status, exit_code }
+    }
+
+    /// Execute the command with inherited stdio (no spinner, no wrapper).
+    ///
+    /// The child's stdout and stderr are connected directly to the parent's
+    /// — output streams live and is not captured. The bracketed status line
+    /// is suppressed. Exit code propagation behaves identically to
+    /// [`run_report`](ShellCommand::run_report).
+    ///
+    /// If `.log()` is configured, an entry with timestamp, status icon,
+    /// elapsed time, and message is appended, but no output body is included.
+    ///
+    /// The `success` closure is ignored — it requires captured output that
+    /// succinct mode does not produce. Success is determined by exit code only.
+    pub fn run_succinct_report(self) -> RunReport {
+        let display_message = derive_display_message(&self.message, &self.command);
+
+        let mut child = match Command::new("sh")
+            .arg("-c")
+            .arg(&self.command)
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(e) => {
+                eprintln!("Failed to spawn command: {e}");
+                return RunReport {
+                    status: RunStatus::Failure,
+                    exit_code: 1,
+                };
+            }
+        };
+
+        let start = Instant::now();
+        let mut timed_out = false;
+
+        loop {
+            if let Some(timeout) = self.timeout {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    timed_out = true;
+                    break;
+                }
+            }
+
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                Err(_) => break,
+            }
+        }
+
+        let final_time = format_elapsed(start.elapsed());
+
+        let (exit_code, signal_num) = if timed_out {
+            (124, None)
+        } else {
+            let status = child.wait().ok();
+            let signal_num: Option<i32> = {
+                #[cfg(unix)]
+                { status.as_ref().and_then(|s| s.signal()) }
+                #[cfg(not(unix))]
+                { None }
+            };
+            let code = status.and_then(|s| s.code()).unwrap_or(1);
+            (code, signal_num)
+        };
+
+        let interrupted = signal_num.is_some();
+        let success = !interrupted && !timed_out && exit_code == 0;
+
+        let status = if timed_out {
+            RunStatus::Timeout
+        } else if interrupted {
+            RunStatus::Interrupted
+        } else if success {
+            RunStatus::Success
+        } else {
+            RunStatus::Failure
+        };
+
+        let final_exit_code = match status {
+            RunStatus::Timeout => 124,
+            RunStatus::Interrupted => signal_num.map(|n| 128 + n).unwrap_or(1),
+            RunStatus::Success | RunStatus::Failure => exit_code,
+        };
+
+        if let Some(ref log_path) = self.log {
+            let now = chrono::Local::now();
+            let timestamp = now.format("%Y-%m-%d %H:%M:%S");
+            let icon = if interrupted { "INTERRUPTED" } else if success { "✓" } else { "✘" };
+
+            let entry = format!("[{timestamp}] [ {icon} {final_time} ] {display_message}\n");
+
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path)
+            {
+                let _ = file.write_all(entry.as_bytes());
+            }
+        }
+
+        RunReport { status, exit_code: final_exit_code }
+    }
+}
+
+fn derive_display_message(message: &Option<String>, command: &str) -> String {
+    match message {
+        Some(msg) => msg.clone(),
+        None => {
+            if command.len() > 30 {
+                format!("{}...", &command[..30])
+            } else {
+                command.to_string()
+            }
         }
     }
+}
+
+fn format_elapsed(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    format!("{h:02}:{m:02}:{s:02}")
 }
 
 fn read_bounded(reader: impl Read, limit: usize) -> String {
@@ -496,6 +642,34 @@ mod tests {
     #[test]
     fn run_status_interrupted_on_signal() {
         assert_eq!(execute("kill -INT $$").run_status(), RunStatus::Interrupted);
+    }
+
+    #[test]
+    fn run_report_propagates_exit_42() {
+        assert_eq!(execute("exit 42").run_report().exit_code, 42);
+    }
+
+    #[test]
+    fn run_report_timeout_is_124() {
+        let report = execute("sleep 10")
+            .timeout(Duration::from_millis(200))
+            .run_report();
+        assert_eq!(report.exit_code, 124);
+        assert_eq!(report.status, RunStatus::Timeout);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_report_interrupted_is_128_plus_signal() {
+        let report = execute("kill -INT $$").run_report();
+        assert_eq!(report.exit_code, 130);
+        assert_eq!(report.status, RunStatus::Interrupted);
+    }
+
+    #[test]
+    fn run_report_true_is_zero_false_is_one() {
+        assert_eq!(execute("true").run_report().exit_code, 0);
+        assert_eq!(execute("false").run_report().exit_code, 1);
     }
 
     #[test]
@@ -760,6 +934,54 @@ mod tests {
     fn interrupted_command_returns_false() {
         let result = execute("kill -INT $$").run();
         assert!(!result);
+    }
+
+    #[test]
+    fn run_succinct_report_propagates_exit_code() {
+        assert_eq!(execute("exit 7").run_succinct_report().exit_code, 7);
+    }
+
+    #[test]
+    fn run_succinct_report_timeout() {
+        let report = execute("sleep 10")
+            .timeout(Duration::from_millis(200))
+            .run_succinct_report();
+        assert_eq!(report.status, RunStatus::Timeout);
+        assert_eq!(report.exit_code, 124);
+    }
+
+    #[test]
+    fn run_succinct_report_log_writes_entry_without_body() {
+        let path = temp_log_path("succinct_log_no_body");
+        let _ = std::fs::remove_file(&path);
+
+        execute("echo body-line")
+            .message("Succinct entry")
+            .log(&path)
+            .run_succinct_report();
+
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("Succinct entry"));
+        assert!(contents.contains("✓"));
+        assert!(!contents.contains("body-line"), "succinct log should not include captured output body");
+        assert!(!contents.contains('\t'), "succinct log should have no tabulated lines");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn run_succinct_report_log_no_ansi() {
+        let path = temp_log_path("succinct_log_no_ansi");
+        let _ = std::fs::remove_file(&path);
+
+        execute("echo hello").log(&path).run_succinct_report();
+        execute("false").log(&path).run_succinct_report();
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            !bytes.contains(&0x1b),
+            "succinct log file should not contain ESC (0x1b) ANSI codes"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[cfg(unix)]
