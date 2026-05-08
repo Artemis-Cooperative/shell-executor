@@ -94,3 +94,11 @@ cargo run --example demo
 ```sh
 cargo test
 ```
+
+## Planned
+
+Features ported from a sibling `x` tool that aren't yet implemented here:
+
+- **Validator command** — a `-v <cmd>` flag that runs a second shell command after the main one to determine pass/fail (distinct from the library's `.success()` closure, which isn't exposed on the CLI).
+- **Exit-code propagation** — preserve the command's actual exit code (e.g. `exit 42` → `x` exits 42) instead of clamping to 0/1.
+- **Succinct / verbose modes** — `--succinct` to drop the `[ ✓ … ]` wrapper entirely and pass output through, and `--verbose` to show stdout/stderr on success (inverse of `--quiet`).
