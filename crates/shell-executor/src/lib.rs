@@ -45,6 +45,7 @@ pub struct ShellCommand {
     quiet: bool,
     max_output: usize,
     log: Option<PathBuf>,
+    show_time: bool,
 }
 
 const DEFAULT_MAX_OUTPUT: usize = 10 * 1024 * 1024; // 10 MB
@@ -120,6 +121,7 @@ pub fn execute(cmd: &str) -> ShellCommand {
         quiet: false,
         max_output: DEFAULT_MAX_OUTPUT,
         log: None,
+        show_time: false,
     }
 }
 
@@ -213,6 +215,15 @@ impl ShellCommand {
     /// and command output.
     pub fn log(mut self, path: impl Into<PathBuf>) -> Self {
         self.log = Some(path.into());
+        self
+    }
+
+    /// Show the elapsed `HH:MM:SS` duration in the spinner and final status
+    /// line. Off by default — the wrapper renders as `[ ✓ ] message` rather
+    /// than `[ ✓ HH:MM:SS ] message`. Log entries always include the duration
+    /// regardless of this setting.
+    pub fn show_time(mut self) -> Self {
+        self.show_time = true;
         self
     }
 
@@ -357,15 +368,18 @@ impl ShellCommand {
                 Err(_) => break,
             }
 
-            let secs = elapsed.as_secs();
-            let h = secs / 3600;
-            let m = (secs % 3600) / 60;
-            let s = secs % 60;
-
-            print!(
-                "\r[ {} {:02}:{:02}:{:02} ] {}",
-                spinner_chars[spinner_idx], h, m, s, display_message
-            );
+            if self.show_time {
+                let secs = elapsed.as_secs();
+                let h = secs / 3600;
+                let m = (secs % 3600) / 60;
+                let s = secs % 60;
+                print!(
+                    "\r[ {} {:02}:{:02}:{:02} ] {}",
+                    spinner_chars[spinner_idx], h, m, s, display_message
+                );
+            } else {
+                print!("\r[ {} ] {}", spinner_chars[spinner_idx], display_message);
+            }
             let _ = stdout().flush();
 
             spinner_idx = (spinner_idx + 1) % spinner_chars.len();
@@ -417,18 +431,17 @@ impl ShellCommand {
             }
         };
 
-        if interrupted {
-            println!(
-                "\r[ \x1b[33mINTERRUPTED\x1b[0m {final_time} ] {display_message}",
-            );
-        } else if success {
-            println!(
-                "\r[ \x1b[32m✓\x1b[0m {final_time} ] {display_message}",
-            );
+        let time_slot = if self.show_time {
+            format!(" {final_time}")
         } else {
-            println!(
-                "\r[ \x1b[31m✘\x1b[0m {final_time} ] {display_message}",
-            );
+            String::new()
+        };
+        if interrupted {
+            println!("\r[ \x1b[33mINTERRUPTED\x1b[0m{time_slot} ] {display_message}");
+        } else if success {
+            println!("\r[ \x1b[32m✓\x1b[0m{time_slot} ] {display_message}");
+        } else {
+            println!("\r[ \x1b[31m✘\x1b[0m{time_slot} ] {display_message}");
         }
 
         if !success || !self.quiet {
@@ -685,6 +698,11 @@ pub fn x_main() -> i32 {
         /// Not run if the main command timed out or was interrupted by a signal.
         #[arg(long, short = 'v')]
         validator: Option<String>,
+
+        /// Include the elapsed `HH:MM:SS` duration in the status wrapper.
+        /// Off by default — the wrapper renders as `[ ✓ ] message`.
+        #[arg(long)]
+        time: bool,
     }
 
     let cli = Cli::parse();
@@ -708,6 +726,10 @@ pub fn x_main() -> i32 {
         cmd = cmd.log(log_path);
     }
 
+    if cli.time {
+        cmd = cmd.show_time();
+    }
+
     let report = if cli.succinct {
         cmd.run_succinct_report()
     } else {
@@ -724,6 +746,9 @@ pub fn x_main() -> i32 {
             }
             if let Some(log_path) = &cli.log {
                 v = v.log(log_path);
+            }
+            if cli.time {
+                v = v.show_time();
             }
             if cli.succinct {
                 v.run_succinct_report().exit_code

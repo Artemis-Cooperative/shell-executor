@@ -4,7 +4,7 @@ A Rust library and CLI tool for running shell commands with a live spinner, elap
 
 ## Features
 
-- **Spinner display** — shows a rotating spinner with elapsed time (`HH:MM:SS`) while a command runs
+- **Spinner display** — shows a rotating spinner while a command runs; pass `--time` (or `.show_time()`) to also surface elapsed `HH:MM:SS` in the wrapper
 - **Timeouts** — kill long-running commands after a specified duration (exit code `124`)
 - **Custom success criteria** — define a closure to determine success based on stdout, stderr, or exit code
 - **Quiet mode** — suppress output on success, only show it on failure
@@ -40,6 +40,9 @@ x "cargo test" --verbose
 # Succinct mode — drop the [ ✓ … ] wrapper and stream output directly
 x "cargo build" --succinct
 
+# Show elapsed time in the wrapper (off by default)
+x "cargo build" --time
+
 # Log results to a file
 x "cargo build --release" --msg "Building" --log build.log
 
@@ -47,6 +50,8 @@ x "cargo build --release" --msg "Building" --log build.log
 x "cargo build" -v "cargo test"
 x "deploy.sh" --validator "curl -fsS https://example.com/health"
 ```
+
+By default the on-screen wrapper omits the elapsed duration (`[ ✓ ] Building`). Pass `--time` to render it as `[ ✓ 00:00:09 ] Building`. Log entries always include the duration regardless of the flag.
 
 The `--log` option appends a timestamped entry to the specified file after each execution. The file is created if it doesn't exist. Log entries look like:
 
