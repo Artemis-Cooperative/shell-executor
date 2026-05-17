@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
 
+mod interactive;
+
 /// The output captured from a completed shell command.
 ///
 /// Contains the standard output, standard error, and exit code of the process.
@@ -607,6 +609,27 @@ impl ShellCommand {
 
         RunReport { status, exit_code: final_exit_code }
     }
+
+    /// Execute the command interactively on a PTY.
+    ///
+    /// The command runs attached to a pseudo-terminal so TUI programs work
+    /// normally. The session uses the terminal's alternate screen for the
+    /// duration of the command; on exit, the alt screen is left and the
+    /// pass/fail status line is printed on the main screen.
+    ///
+    /// Interactive mode ignores [`timeout`](ShellCommand::timeout) and the
+    /// [`success`](ShellCommand::success) closure (the byte stream is full
+    /// of TUI escape codes and isn't usefully inspectable). Success is
+    /// determined by exit code only. No spinner is shown.
+    pub fn run_interactive_report(self) -> RunReport {
+        let display_message = derive_display_message(&self.message, &self.command);
+        interactive::run_interactive_report(
+            &self.command,
+            &display_message,
+            self.log.as_ref(),
+            self.show_time,
+        )
+    }
 }
 
 fn derive_display_message(message: &Option<String>, command: &str) -> String {
@@ -622,7 +645,7 @@ fn derive_display_message(message: &Option<String>, command: &str) -> String {
     }
 }
 
-fn format_elapsed(elapsed: Duration) -> String {
+pub(crate) fn format_elapsed(elapsed: Duration) -> String {
     let secs = elapsed.as_secs();
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
@@ -703,6 +726,11 @@ pub fn x_main() -> i32 {
         /// Off by default — the wrapper renders as `[ ✓ ] message`.
         #[arg(long)]
         time: bool,
+
+        /// Run the command interactively on a PTY (alt screen, no spinner).
+        /// On exit, the pass/fail status line is printed on the main screen.
+        #[arg(long, short = 'i')]
+        interactive: bool,
     }
 
     let cli = Cli::parse();
@@ -730,7 +758,9 @@ pub fn x_main() -> i32 {
         cmd = cmd.show_time();
     }
 
-    let report = if cli.succinct {
+    let report = if cli.interactive {
+        cmd.run_interactive_report()
+    } else if cli.succinct {
         cmd.run_succinct_report()
     } else {
         cmd.run_report()

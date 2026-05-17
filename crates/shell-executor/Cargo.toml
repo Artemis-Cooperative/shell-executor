@@ -1,6 +1,6 @@
 [package]
 name = "shell-executor"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 
 [[bin]]
@@ -10,3 +10,8 @@ path = "src/bin/x.rs"
 [dependencies]
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
+portable-pty = "0.9"
+crossterm = "0.28"
+
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"
