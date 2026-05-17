@@ -7,6 +7,9 @@ use std::time::{Duration, Instant};
 use std::os::unix::process::ExitStatusExt;
 
 mod interactive;
+mod parallel;
+
+pub use parallel::{parallel, ParallelGroup};
 
 /// The output captured from a completed shell command.
 ///
@@ -632,7 +635,7 @@ impl ShellCommand {
     }
 }
 
-fn derive_display_message(message: &Option<String>, command: &str) -> String {
+pub(crate) fn derive_display_message(message: &Option<String>, command: &str) -> String {
     match message {
         Some(msg) => msg.clone(),
         None => {
@@ -653,7 +656,7 @@ pub(crate) fn format_elapsed(elapsed: Duration) -> String {
     format!("{h:02}:{m:02}:{s:02}")
 }
 
-fn read_bounded(reader: impl Read, limit: usize) -> String {
+pub(crate) fn read_bounded(reader: impl Read, limit: usize) -> String {
     let mut buf = Vec::new();
     let mut limited = reader.take(limit as u64 + 1);
     let _ = limited.read_to_end(&mut buf);
@@ -689,15 +692,16 @@ pub fn x_main() -> i32 {
     #[derive(Parser)]
     #[command(name = "x", about = "Execute a shell command with a spinner")]
     struct Cli {
-        /// The shell command to execute
-        command: String,
+        /// The shell command to execute (omit if using --parallel).
+        command: Option<String>,
 
         /// Spinner message to display
         #[arg(long, alias = "message")]
         msg: Option<String>,
 
-        /// Timeout in seconds
-        #[arg(long)]
+        /// Timeout in seconds. Not supported with --parallel — nest `x` calls
+        /// inside parallel command strings for per-child timeouts.
+        #[arg(long, conflicts_with = "parallel")]
         timeout: Option<u64>,
 
         /// Suppress output on success (only shown on failure).
@@ -719,6 +723,7 @@ pub fn x_main() -> i32 {
         /// Validator shell command run after the main command. Its exit code
         /// determines overall pass/fail (overrides the main command's status).
         /// Not run if the main command timed out or was interrupted by a signal.
+        /// With --parallel, the validator always runs after all children finish.
         #[arg(long, short = 'v')]
         validator: Option<String>,
 
@@ -729,14 +734,75 @@ pub fn x_main() -> i32 {
 
         /// Run the command interactively on a PTY (alt screen, no spinner).
         /// On exit, the pass/fail status line is printed on the main screen.
-        #[arg(long, short = 'i')]
+        #[arg(long, short = 'i', conflicts_with = "parallel")]
         interactive: bool,
+
+        /// Run multiple commands in parallel under a hierarchical spinner.
+        /// Accepts multiple values, e.g. `--parallel "cmd1" "cmd2" "cmd3"`,
+        /// and can be repeated. Per-child --msg/--timeout aren't supported;
+        /// nest `x` calls in the command strings for those.
+        #[arg(long, num_args = 1.., action = clap::ArgAction::Append)]
+        parallel: Vec<String>,
     }
 
     let cli = Cli::parse();
     let _ = cli.verbose;
 
-    let mut cmd = execute(&cli.command);
+    if cli.command.is_none() && cli.parallel.is_empty() {
+        eprintln!("error: provide a command or one or more --parallel commands");
+        return 2;
+    }
+
+    if !cli.parallel.is_empty() {
+        let mut group = parallel(cli.parallel.iter().cloned());
+        if let Some(msg) = &cli.msg {
+            group = group.message(msg);
+        }
+        if cli.quiet && !cli.succinct {
+            group = group.quiet();
+        }
+        if let Some(log_path) = &cli.log {
+            group = group.log(log_path);
+        }
+        if cli.time {
+            group = group.show_time();
+        }
+
+        let group_report = if cli.succinct {
+            group.run_succinct_report()
+        } else {
+            group.run_report()
+        };
+        let group_success = matches!(group_report.status, RunStatus::Success);
+
+        // Validator (if any) always runs after the group, regardless of pass/fail.
+        let validator_passed = if let Some(v_cmd) = &cli.validator {
+            let mut v = execute(v_cmd).message("Validator");
+            if cli.quiet && !cli.succinct {
+                v = v.quiet();
+            }
+            if let Some(log_path) = &cli.log {
+                v = v.log(log_path);
+            }
+            if cli.time {
+                v = v.show_time();
+            }
+            let v_report = if cli.succinct {
+                v.run_succinct_report()
+            } else {
+                v.run_report()
+            };
+            matches!(v_report.status, RunStatus::Success)
+        } else {
+            false
+        };
+
+        return if group_success || validator_passed { 0 } else { 1 };
+    }
+
+    let command = cli.command.as_deref().expect("validated above");
+
+    let mut cmd = execute(command);
 
     if let Some(msg) = &cli.msg {
         cmd = cmd.message(msg);

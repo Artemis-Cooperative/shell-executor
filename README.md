@@ -12,6 +12,7 @@ A Rust library and CLI tool for running shell commands with a live spinner, elap
 - **Succinct mode** — `--succinct` drops the `[ ✓ … ]` wrapper and streams the child's stdout/stderr directly to the terminal without capture or indentation
 - **Log file** — append timestamped execution results to a file after each command
 - **Interrupt detection** — commands killed by a signal show `INTERRUPTED` instead of ✓/✘
+- **Parallel groups** — `--parallel <cmd>...` (or `parallel(...)` in the library) runs multiple commands concurrently under a hierarchical spinner; one failure does not cancel siblings, and the group exits `0` only if every child succeeds (a passing `--validator` rescues a failing group)
 - **Validator command** — a `-v / --validator <cmd>` flag on the CLI runs a second shell command after the main one; its exit code determines overall pass/fail (overrides the main command's status, unless the main command timed out or was interrupted)
 - **Exit-code propagation** — the `x` CLI exits with the underlying command's actual exit code (e.g. `exit 42` → `x` exits 42), `124` on timeout, and `128 + signal` on signal-kill (Unix)
 - **Builder API** — chain `.message()`, `.timeout()`, `.success()`, `.quiet()`, and `.log()` before calling a terminal method: `.run()` (bool), `.run_status()` (`RunStatus`), `.run_report()` (`RunReport` — status + exit code), `.run_succinct_report()` (inherited stdio, no wrapper), or `.run_capture()` (silent, returns `CommandOutput`)
@@ -49,7 +50,27 @@ x "cargo build --release" --msg "Building" --log build.log
 # Run a validator after the main command — its exit code decides overall pass/fail
 x "cargo build" -v "cargo test"
 x "deploy.sh" --validator "curl -fsS https://example.com/health"
+
+# Run multiple commands in parallel under a hierarchical spinner
+x --msg "run multiple commands" \
+  --parallel "cargo build" "cargo test" "cargo clippy"
+
+# Per-child timeouts: nest x calls inside the parallel command strings
+x --parallel "x 'slow.sh' --timeout 120" "x 'fast.sh' --timeout 30"
 ```
+
+When `--parallel` is used the renderer draws a parent line plus one indented child line per command and refreshes them in place; on completion the block is finalized and each child's captured output is printed indented underneath it:
+
+```
+[ ✘ ] run multiple commands
+    [ ✓ ] cargo build
+        Compiling shell-executor v0.3.0
+    [ ✘ ] cargo test
+        test failure_case ... FAILED
+    [ ✓ ] cargo clippy
+```
+
+`--parallel` cannot be combined with `--interactive` or `--timeout`. `--msg` applies to the parent line only — child labels are the truncated command strings. Per-child timeouts work by nesting `x` calls. With `--validator`, the validator always runs after all children finish; the program exits `0` if every child succeeded OR the validator passed, otherwise `1` (child exit codes are not individually propagated by a parallel group).
 
 By default the on-screen wrapper omits the elapsed duration (`[ ✓ ] Building`). Pass `--time` to render it as `[ ✓ 00:00:09 ] Building`. Log entries always include the duration regardless of the flag.
 
@@ -117,6 +138,12 @@ execute("cargo build").run_succinct_report();
 use shell_executor::{pass, fail};
 pass("working tree clean");
 fail("could not open repository");
+
+// Run multiple commands concurrently
+use shell_executor::parallel;
+let ok = parallel(["cargo build", "cargo test", "cargo clippy"])
+    .message("run multiple commands")
+    .run();
 ```
 
 ## Running the Demo
