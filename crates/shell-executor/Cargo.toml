@@ -2,6 +2,7 @@
 name = "shell-executor"
 version = "0.4.0"
 edition = "2021"
+repository = "https://github.com/Artemis-Cooperative/shell-executor"
 
 [[bin]]
 name = "x"
