@@ -1,6 +1,6 @@
 [package]
 name = "shell-executor"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 repository = "https://github.com/Artemis-Cooperative/shell-executor"
 
@@ -12,7 +12,9 @@ path = "src/bin/x.rs"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 portable-pty = "0.9"
-crossterm = "0.28"
+crossterm = "0.29"
+ratatui = "0.30"
+vt100 = "0.16"
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

@@ -8,6 +8,7 @@ use std::os::unix::process::ExitStatusExt;
 
 mod interactive;
 mod parallel;
+mod tui;
 
 pub use parallel::{parallel, ParallelGroup};
 
@@ -734,7 +735,11 @@ pub fn x_main() -> i32 {
 
         /// Run the command interactively on a PTY (alt screen, no spinner).
         /// On exit, the pass/fail status line is printed on the main screen.
-        #[arg(long, short = 'i', conflicts_with = "parallel")]
+        ///
+        /// When combined with `--parallel`, opens an mprocs-style TUI with a
+        /// sidebar listing each child and a main pane showing the focused
+        /// child's PTY output.
+        #[arg(long, short = 'i')]
         interactive: bool,
 
         /// Run multiple commands in parallel under a hierarchical spinner.
@@ -754,24 +759,42 @@ pub fn x_main() -> i32 {
     }
 
     if !cli.parallel.is_empty() {
-        let mut group = parallel(cli.parallel.iter().cloned());
-        if let Some(msg) = &cli.msg {
-            group = group.message(msg);
-        }
-        if cli.quiet && !cli.succinct {
-            group = group.quiet();
-        }
-        if let Some(log_path) = &cli.log {
-            group = group.log(log_path);
-        }
-        if cli.time {
-            group = group.show_time();
-        }
+        let log_path_buf = cli.log.as_deref().map(PathBuf::from);
 
-        let group_report = if cli.succinct {
-            group.run_succinct_report()
+        let group_report = if cli.interactive && !cli.succinct {
+            tui::run_report(
+                &cli.parallel,
+                cli.msg.as_deref(),
+                cli.quiet,
+                log_path_buf.as_ref(),
+                cli.time,
+            )
+        } else if cli.interactive && cli.succinct {
+            tui::run_succinct_report(
+                &cli.parallel,
+                cli.msg.as_deref(),
+                cli.quiet,
+                log_path_buf.as_ref(),
+            )
         } else {
-            group.run_report()
+            let mut group = parallel(cli.parallel.iter().cloned());
+            if let Some(msg) = &cli.msg {
+                group = group.message(msg);
+            }
+            if cli.quiet && !cli.succinct {
+                group = group.quiet();
+            }
+            if let Some(log_path) = &cli.log {
+                group = group.log(log_path);
+            }
+            if cli.time {
+                group = group.show_time();
+            }
+            if cli.succinct {
+                group.run_succinct_report()
+            } else {
+                group.run_report()
+            }
         };
         let group_success = matches!(group_report.status, RunStatus::Success);
 

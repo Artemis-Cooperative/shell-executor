@@ -83,18 +83,9 @@ fn both_group_and_validator_fail_exits_one() {
     assert_eq!(status.code(), Some(1));
 }
 
-/// `--parallel` conflicts with `--interactive`.
-#[test]
-fn parallel_conflicts_with_interactive() {
-    let status = x_bin()
-        .arg("--parallel")
-        .arg("true")
-        .arg("-i")
-        .status()
-        .expect("failed to run x");
-    // clap returns exit 2 on argument errors.
-    assert_eq!(status.code(), Some(2));
-}
+// Note: `--parallel` + `--interactive` no longer conflicts — it opens the
+// mprocs-style TUI. That path can't be exercised in a non-TTY test runner
+// since ratatui requires a terminal device.
 
 /// `--parallel` conflicts with `--timeout`.
 #[test]

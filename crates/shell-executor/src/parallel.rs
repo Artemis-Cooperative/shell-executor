@@ -280,7 +280,7 @@ impl ParallelGroup {
     }
 }
 
-enum ChildState {
+pub(crate) enum ChildState {
     Running,
     Done {
         status: RunStatus,
@@ -418,7 +418,7 @@ fn render_in_place(
     let _ = stdout().flush();
 }
 
-fn print_final_block(
+pub(crate) fn print_final_block(
     states: &[Arc<Mutex<ChildState>>],
     parent_label: &str,
     child_labels: &[String],
@@ -467,7 +467,7 @@ fn print_final_block(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_log_entry(
+pub(crate) fn write_log_entry(
     log_path: &PathBuf,
     states: &[Arc<Mutex<ChildState>>],
     parent_label: &str,
@@ -543,7 +543,7 @@ fn plain_icon(status: RunStatus) -> &'static str {
     }
 }
 
-fn compute_parent_status(states: &[Arc<Mutex<ChildState>>]) -> RunStatus {
+pub(crate) fn compute_parent_status(states: &[Arc<Mutex<ChildState>>]) -> RunStatus {
     let mut any_interrupted = false;
     let mut all_success = true;
     for s in states {
@@ -565,7 +565,7 @@ fn compute_parent_status(states: &[Arc<Mutex<ChildState>>]) -> RunStatus {
     }
 }
 
-fn status_to_exit_code(status: RunStatus) -> i32 {
+pub(crate) fn status_to_exit_code(status: RunStatus) -> i32 {
     if matches!(status, RunStatus::Success) { 0 } else { 1 }
 }
 
