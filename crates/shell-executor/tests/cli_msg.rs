@@ -111,10 +111,7 @@ fn default_message_uses_command_when_short() {
     let cmd = "echo hi";
     assert!(cmd.len() <= 30, "test fixture: command must be short");
 
-    let output = x_bin()
-        .arg(cmd)
-        .output()
-        .expect("failed to run x");
+    let output = x_bin().arg(cmd).output().expect("failed to run x");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -147,10 +144,7 @@ fn default_message_truncates_long_command() {
         "test fixture drift: recompute the expected prefix"
     );
 
-    let output = x_bin()
-        .arg(cmd)
-        .output()
-        .expect("failed to run x");
+    let output = x_bin().arg(cmd).output().expect("failed to run x");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

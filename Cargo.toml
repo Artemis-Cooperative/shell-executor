@@ -6,3 +6,59 @@ resolver = "3"
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_abi = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+# Lint groups (priority -1 so individual overrides take precedence)
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+style = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# Pedantic overrides — allow these commonly noisy lints
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+wildcard_imports = "allow"
+return_self_not_must_use = "allow"
+
+# Cargo overrides
+multiple_crate_versions = "allow"
+cargo_common_metadata = "allow"
+
+# Panic prevention (restriction lints)
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+panic_in_result_fn = "warn"
+
+# Suppress-annotation prevention
+allow_attributes_without_reason = "warn"
+
+# Debug/print prevention (restriction lints)
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+# Type-safety lints (restriction + pedantic)
+as_conversions = "warn"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+cast_lossless = "deny"
+cast_precision_loss = "warn"
+checked_conversions = "deny"
+fn_to_numeric_cast_any = "deny"
+ptr_as_ptr = "deny"
+ref_as_ptr = "deny"

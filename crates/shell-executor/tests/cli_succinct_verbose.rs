@@ -22,10 +22,7 @@ use common::x_bin;
 /// and indents the command's output with a leading tab/spaces.
 #[test]
 fn default_mode_shows_wrapper() {
-    let output = x_bin()
-        .arg("echo hello")
-        .output()
-        .expect("failed to run x");
+    let output = x_bin().arg("echo hello").output().expect("failed to run x");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

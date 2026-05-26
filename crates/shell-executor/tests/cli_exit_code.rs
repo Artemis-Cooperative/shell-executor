@@ -17,10 +17,7 @@ use common::{fresh_temp_path, x_bin};
 /// `x true` → exit 0.
 #[test]
 fn exit_code_true_is_zero() {
-    let status = x_bin()
-        .arg("true")
-        .status()
-        .expect("failed to run x");
+    let status = x_bin().arg("true").status().expect("failed to run x");
     assert_eq!(
         status.code(),
         Some(0),
@@ -31,10 +28,7 @@ fn exit_code_true_is_zero() {
 /// `x false` → exit 1 (the conventional non-zero from `false`).
 #[test]
 fn exit_code_false_is_one() {
-    let status = x_bin()
-        .arg("false")
-        .status()
-        .expect("failed to run x");
+    let status = x_bin().arg("false").status().expect("failed to run x");
     assert_eq!(
         status.code(),
         Some(1),
@@ -45,10 +39,7 @@ fn exit_code_false_is_one() {
 /// `x "exit 0"` → exit 0.
 #[test]
 fn exit_code_explicit_zero() {
-    let status = x_bin()
-        .arg("exit 0")
-        .status()
-        .expect("failed to run x");
+    let status = x_bin().arg("exit 0").status().expect("failed to run x");
     assert_eq!(
         status.code(),
         Some(0),
@@ -59,10 +50,7 @@ fn exit_code_explicit_zero() {
 /// `x "exit 42"` → exit 42 (preserve the actual exit code, don't clamp to 1).
 #[test]
 fn exit_code_42_propagates() {
-    let status = x_bin()
-        .arg("exit 42")
-        .status()
-        .expect("failed to run x");
+    let status = x_bin().arg("exit 42").status().expect("failed to run x");
     assert_eq!(
         status.code(),
         Some(42),
@@ -73,10 +61,7 @@ fn exit_code_42_propagates() {
 /// `x "exit 7"` → exit 7.
 #[test]
 fn exit_code_7_propagates() {
-    let status = x_bin()
-        .arg("exit 7")
-        .status()
-        .expect("failed to run x");
+    let status = x_bin().arg("exit 7").status().expect("failed to run x");
     assert_eq!(
         status.code(),
         Some(7),
@@ -152,7 +137,7 @@ fn validator_false_yields_one() {
 }
 
 /// `x "sleep 30" --timeout 1` → exit 124 (conventional Unix `timeout` code).
-/// The library already emits exit_code 124 internally on timeout; the CLI
+/// The library already emits `exit_code` 124 internally on timeout; the CLI
 /// should surface that to the OS.
 #[test]
 fn timeout_exits_124() {

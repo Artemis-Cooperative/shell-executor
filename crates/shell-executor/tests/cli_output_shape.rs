@@ -34,10 +34,7 @@ use common::x_bin;
 /// Pins the spaces-vs-tab choice: a tab-indented form must NOT appear.
 #[test]
 fn stdout_single_line_indented_with_four_spaces() {
-    let output = x_bin()
-        .arg("echo hi")
-        .output()
-        .expect("failed to run x");
+    let output = x_bin().arg("echo hi").output().expect("failed to run x");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -148,10 +145,7 @@ fn stdout_and_stderr_both_shown_indented() {
 /// non-space character.
 #[test]
 fn empty_output_command_shows_wrapper_only() {
-    let output = x_bin()
-        .arg("true")
-        .output()
-        .expect("failed to run x");
+    let output = x_bin().arg("true").output().expect("failed to run x");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -163,12 +157,7 @@ fn empty_output_command_shows_wrapper_only() {
     );
 
     let has_body_line = combined.lines().any(|line| {
-        line.starts_with("    ")
-            && line
-                .chars()
-                .nth(4)
-                .map(|c| !c.is_whitespace())
-                .unwrap_or(false)
+        line.starts_with("    ") && line.chars().nth(4).is_some_and(|c| !c.is_whitespace())
     });
     assert!(
         !has_body_line,
@@ -297,10 +286,7 @@ fn output_with_special_chars_preserved() {
         .lines()
         .find(|l| l.starts_with("    ") && l.contains("spaces  and"))
         .unwrap_or_else(|| panic!("no indented body line contained `spaces  and`; got stdout={stdout:?} stderr={stderr:?}"));
-    let after_and = line
-        .split_once("and")
-        .map(|(_, rest)| rest)
-        .unwrap_or("");
+    let after_and = line.split_once("and").map_or("", |(_, rest)| rest);
     assert!(
         after_and.contains('\t'),
         "embedded tab after `and` should survive; line={line:?} stdout={stdout:?} stderr={stderr:?}"
@@ -319,21 +305,18 @@ fn output_with_special_chars_preserved() {
 /// appear earlier in the combined output than any indented body line.
 #[test]
 fn wrapper_appears_after_body_block_renders() {
-    let output = x_bin()
-        .arg("echo line1")
-        .output()
-        .expect("failed to run x");
+    let output = x_bin().arg("echo line1").output().expect("failed to run x");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}{stderr}");
 
-    let wrapper_pos = combined
-        .find("[ ")
-        .unwrap_or_else(|| panic!("no `[ ` wrapper opener found; got stdout={stdout:?} stderr={stderr:?}"));
-    let body_pos = combined
-        .find("    line1")
-        .unwrap_or_else(|| panic!("no `    line1` body line found; got stdout={stdout:?} stderr={stderr:?}"));
+    let wrapper_pos = combined.find("[ ").unwrap_or_else(|| {
+        panic!("no `[ ` wrapper opener found; got stdout={stdout:?} stderr={stderr:?}")
+    });
+    let body_pos = combined.find("    line1").unwrap_or_else(|| {
+        panic!("no `    line1` body line found; got stdout={stdout:?} stderr={stderr:?}")
+    });
 
     assert!(
         wrapper_pos < body_pos,

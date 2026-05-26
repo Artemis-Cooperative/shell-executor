@@ -1,10 +1,13 @@
-use std::io::{Read, Write, stdout};
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "CLI tool intentionally writes to stdout/stderr for user-facing output"
+)]
+
+use std::io::{stdout, Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
-
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
 
 mod interactive;
 mod parallel;
@@ -281,24 +284,24 @@ impl ShellCommand {
                     };
                 }
                 match child.try_wait() {
-                    Ok(Some(_)) => break,
+                    Ok(Some(_)) | Err(_) => break,
                     Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-                    Err(_) => break,
                 }
             }
         }
 
-        let stdout_str = child.stdout.take()
+        let stdout_str = child
+            .stdout
+            .take()
             .map(|out| read_bounded(out, self.max_output))
             .unwrap_or_default();
-        let stderr_str = child.stderr.take()
+        let stderr_str = child
+            .stderr
+            .take()
             .map(|err| read_bounded(err, self.max_output))
             .unwrap_or_default();
 
-        let exit_code = child
-            .wait()
-            .map(|s| s.code().unwrap_or(1))
-            .unwrap_or(1);
+        let exit_code = child.wait().map_or(1, |s| s.code().unwrap_or(1));
 
         CommandOutput {
             stdout: stdout_str,
@@ -332,7 +335,7 @@ impl ShellCommand {
     /// of spinner, printing, and logging, but additionally surfaces the exit
     /// code so callers can propagate it (for example, to the OS).
     pub fn run_report(self) -> RunReport {
-        let display_message = derive_display_message(&self.message, &self.command);
+        let display_message = derive_display_message(self.message.as_ref(), &self.command);
 
         let mut child = match Command::new("sh")
             .arg("-c")
@@ -369,9 +372,8 @@ impl ShellCommand {
             }
 
             match child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(_)) | Err(_) => break,
                 Ok(None) => {}
-                Err(_) => break,
             }
 
             if self.show_time {
@@ -395,35 +397,49 @@ impl ShellCommand {
         let final_time = format_elapsed(start.elapsed());
 
         let (output, signal_num) = if timed_out {
-            (CommandOutput {
-                stdout: String::new(),
-                stderr: String::new(),
-                exit_code: 124,
-            }, None)
+            (
+                CommandOutput {
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    exit_code: 124,
+                },
+                None,
+            )
         } else {
-            let stdout_str = child.stdout.take()
+            let stdout_str = child
+                .stdout
+                .take()
                 .map(|out| read_bounded(out, self.max_output))
                 .unwrap_or_default();
-            let stderr_str = child.stderr.take()
+            let stderr_str = child
+                .stderr
+                .take()
                 .map(|err| read_bounded(err, self.max_output))
                 .unwrap_or_default();
 
             let status = child.wait().ok();
             let signal_num: Option<i32> = {
                 #[cfg(unix)]
-                { status.as_ref().and_then(|s| s.signal()) }
+                {
+                    status
+                        .as_ref()
+                        .and_then(std::os::unix::process::ExitStatusExt::signal)
+                }
                 #[cfg(not(unix))]
-                { None }
+                {
+                    None
+                }
             };
-            let exit_code = status
-                .and_then(|s| s.code())
-                .unwrap_or(1);
+            let exit_code = status.and_then(|s| s.code()).unwrap_or(1);
 
-            (CommandOutput {
-                stdout: stdout_str,
-                stderr: stderr_str,
-                exit_code,
-            }, signal_num)
+            (
+                CommandOutput {
+                    stdout: stdout_str,
+                    stderr: stderr_str,
+                    exit_code,
+                },
+                signal_num,
+            )
         };
 
         let interrupted = signal_num.is_some();
@@ -463,7 +479,13 @@ impl ShellCommand {
         if let Some(ref log_path) = self.log {
             let now = chrono::Local::now();
             let timestamp = now.format("%Y-%m-%d %H:%M:%S");
-            let icon = if interrupted { "INTERRUPTED" } else if success { "✓" } else { "✘" };
+            let icon = if interrupted {
+                "INTERRUPTED"
+            } else if success {
+                "✓"
+            } else {
+                "✘"
+            };
 
             let mut entry = format!("[{timestamp}] [ {icon} {final_time} ] {display_message}\n");
 
@@ -501,7 +523,7 @@ impl ShellCommand {
 
         let exit_code = match status {
             RunStatus::Timeout => 124,
-            RunStatus::Interrupted => signal_num.map(|n| 128 + n).unwrap_or(1),
+            RunStatus::Interrupted => signal_num.map_or(1, |n| 128 + n),
             RunStatus::Success | RunStatus::Failure => output.exit_code,
         };
 
@@ -521,7 +543,7 @@ impl ShellCommand {
     /// The `success` closure is ignored — it requires captured output that
     /// succinct mode does not produce. Success is determined by exit code only.
     pub fn run_succinct_report(self) -> RunReport {
-        let display_message = derive_display_message(&self.message, &self.command);
+        let display_message = derive_display_message(self.message.as_ref(), &self.command);
 
         let mut child = match Command::new("sh")
             .arg("-c")
@@ -554,9 +576,8 @@ impl ShellCommand {
             }
 
             match child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(_)) | Err(_) => break,
                 Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-                Err(_) => break,
             }
         }
 
@@ -568,9 +589,15 @@ impl ShellCommand {
             let status = child.wait().ok();
             let signal_num: Option<i32> = {
                 #[cfg(unix)]
-                { status.as_ref().and_then(|s| s.signal()) }
+                {
+                    status
+                        .as_ref()
+                        .and_then(std::os::unix::process::ExitStatusExt::signal)
+                }
                 #[cfg(not(unix))]
-                { None }
+                {
+                    None
+                }
             };
             let code = status.and_then(|s| s.code()).unwrap_or(1);
             (code, signal_num)
@@ -591,14 +618,20 @@ impl ShellCommand {
 
         let final_exit_code = match status {
             RunStatus::Timeout => 124,
-            RunStatus::Interrupted => signal_num.map(|n| 128 + n).unwrap_or(1),
+            RunStatus::Interrupted => signal_num.map_or(1, |n| 128 + n),
             RunStatus::Success | RunStatus::Failure => exit_code,
         };
 
         if let Some(ref log_path) = self.log {
             let now = chrono::Local::now();
             let timestamp = now.format("%Y-%m-%d %H:%M:%S");
-            let icon = if interrupted { "INTERRUPTED" } else if success { "✓" } else { "✘" };
+            let icon = if interrupted {
+                "INTERRUPTED"
+            } else if success {
+                "✓"
+            } else {
+                "✘"
+            };
 
             let entry = format!("[{timestamp}] [ {icon} {final_time} ] {display_message}\n");
 
@@ -611,7 +644,10 @@ impl ShellCommand {
             }
         }
 
-        RunReport { status, exit_code: final_exit_code }
+        RunReport {
+            status,
+            exit_code: final_exit_code,
+        }
     }
 
     /// Execute the command interactively on a PTY.
@@ -626,7 +662,7 @@ impl ShellCommand {
     /// of TUI escape codes and isn't usefully inspectable). Success is
     /// determined by exit code only. No spinner is shown.
     pub fn run_interactive_report(self) -> RunReport {
-        let display_message = derive_display_message(&self.message, &self.command);
+        let display_message = derive_display_message(self.message.as_ref(), &self.command);
         interactive::run_interactive_report(
             &self.command,
             &display_message,
@@ -636,7 +672,7 @@ impl ShellCommand {
     }
 }
 
-pub(crate) fn derive_display_message(message: &Option<String>, command: &str) -> String {
+pub(crate) fn derive_display_message(message: Option<&String>, command: &str) -> String {
     match message {
         Some(msg) => msg.clone(),
         None => {
@@ -659,7 +695,7 @@ pub(crate) fn format_elapsed(elapsed: Duration) -> String {
 
 pub(crate) fn read_bounded(reader: impl Read, limit: usize) -> String {
     let mut buf = Vec::new();
-    let mut limited = reader.take(limit as u64 + 1);
+    let mut limited = reader.take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1));
     let _ = limited.read_to_end(&mut buf);
     let truncated = buf.len() > limit;
     if truncated {
@@ -687,6 +723,10 @@ pub(crate) fn read_bounded(reader: impl Read, limit: usize) -> String {
 ///
 /// Returns the process exit code rather than calling [`std::process::exit`]
 /// itself, so callers stay in control of termination.
+#[expect(
+    clippy::expect_used,
+    reason = "command presence already validated upstream by clap conflicts_with"
+)]
 pub fn x_main() -> i32 {
     use clap::Parser;
 
@@ -820,7 +860,7 @@ pub fn x_main() -> i32 {
             false
         };
 
-        return if group_success || validator_passed { 0 } else { 1 };
+        return i32::from(!(group_success || validator_passed));
     }
 
     let command = cli.command.as_deref().expect("validated above");
@@ -856,8 +896,8 @@ pub fn x_main() -> i32 {
     };
 
     match (report.status, &cli.validator) {
-        (RunStatus::Timeout, _) | (RunStatus::Interrupted, _) => report.exit_code,
-        (RunStatus::Success, None) | (RunStatus::Failure, None) => report.exit_code,
+        (RunStatus::Timeout | RunStatus::Interrupted, _)
+        | (RunStatus::Success | RunStatus::Failure, None) => report.exit_code,
         (RunStatus::Success | RunStatus::Failure, Some(v_cmd)) => {
             let mut v = execute(v_cmd).message("Validator");
             if cli.quiet && !cli.succinct {
@@ -937,7 +977,8 @@ mod tests {
     #[test]
     fn long_command_truncation() {
         // Commands longer than 30 chars should still run without a custom message
-        let result = execute("echo this is a very long command that exceeds thirty characters").run();
+        let result =
+            execute("echo this is a very long command that exceeds thirty characters").run();
         assert!(result);
     }
 
@@ -953,9 +994,7 @@ mod tests {
     #[test]
     fn custom_closure_rejects_successful_command() {
         // Command exits 0 but the closure says no
-        let result = execute("echo fine")
-            .success(|_| false)
-            .run();
+        let result = execute("echo fine").success(|_| false).run();
         assert!(!result);
     }
 
@@ -1016,7 +1055,10 @@ mod tests {
     }
 
     fn temp_log_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("shell_executor_test_{name}_{}.log", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "shell_executor_test_{name}_{}.log",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -1046,7 +1088,10 @@ mod tests {
         assert!(contents.contains("Second"));
         // Two separate log entries
         let entry_count = contents.matches("] [").count();
-        assert!(entry_count >= 2, "expected at least 2 entries, got {entry_count}");
+        assert!(
+            entry_count >= 2,
+            "expected at least 2 entries, got {entry_count}"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1059,10 +1104,11 @@ mod tests {
 
         let contents = std::fs::read_to_string(&path).unwrap();
         // Match [YYYY-MM-DD HH:MM:SS] pattern
-        let re_like = contents.starts_with('[')
-            && contents.contains('-')
-            && contents.contains(':');
-        assert!(re_like, "log should start with a timestamp, got: {contents}");
+        let re_like = contents.starts_with('[') && contents.contains('-') && contents.contains(':');
+        assert!(
+            re_like,
+            "log should start with a timestamp, got: {contents}"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1138,8 +1184,14 @@ mod tests {
 
         let contents = std::fs::read_to_string(&path).unwrap();
         assert!(contents.contains("Quiet ok"));
-        assert!(!contents.contains("suppressed"), "quiet success should not log output");
-        assert!(!contents.contains('\t'), "quiet success should have no tabulated lines");
+        assert!(
+            !contents.contains("suppressed"),
+            "quiet success should not log output"
+        );
+        assert!(
+            !contents.contains('\t'),
+            "quiet success should have no tabulated lines"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1156,7 +1208,10 @@ mod tests {
 
         let contents = std::fs::read_to_string(&path).unwrap();
         assert!(contents.contains("✘"));
-        assert!(contents.contains("\tvisible"), "quiet failure should still log output");
+        assert!(
+            contents.contains("\tvisible"),
+            "quiet failure should still log output"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1169,7 +1224,10 @@ mod tests {
 
         let contents = std::fs::read_to_string(&path).unwrap();
         // Should contain HH:MM:SS format
-        assert!(contents.contains("00:00:0"), "log should contain elapsed time");
+        assert!(
+            contents.contains("00:00:0"),
+            "log should contain elapsed time"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1185,8 +1243,14 @@ mod tests {
             .run();
 
         let contents = std::fs::read_to_string(&path).unwrap();
-        assert!(contents.contains("INTERRUPTED"), "signal-killed command should log INTERRUPTED");
-        assert!(!contents.contains("✓"), "interrupted should not show checkmark");
+        assert!(
+            contents.contains("INTERRUPTED"),
+            "signal-killed command should log INTERRUPTED"
+        );
+        assert!(
+            !contents.contains("✓"),
+            "interrupted should not show checkmark"
+        );
         assert!(!contents.contains("✘"), "interrupted should not show cross");
         let _ = std::fs::remove_file(&path);
     }
@@ -1225,8 +1289,14 @@ mod tests {
         let contents = std::fs::read_to_string(&path).unwrap();
         assert!(contents.contains("Succinct entry"));
         assert!(contents.contains("✓"));
-        assert!(!contents.contains("body-line"), "succinct log should not include captured output body");
-        assert!(!contents.contains('\t'), "succinct log should have no tabulated lines");
+        assert!(
+            !contents.contains("body-line"),
+            "succinct log should not include captured output body"
+        );
+        assert!(
+            !contents.contains('\t'),
+            "succinct log should have no tabulated lines"
+        );
         let _ = std::fs::remove_file(&path);
     }
 
@@ -1262,10 +1332,7 @@ mod tests {
         let path = temp_log_path("interrupted_no_ansi");
         let _ = std::fs::remove_file(&path);
 
-        execute("kill -INT $$")
-            .message("No color")
-            .log(&path)
-            .run();
+        execute("kill -INT $$").message("No color").log(&path).run();
 
         let bytes = std::fs::read(&path).unwrap();
         assert!(

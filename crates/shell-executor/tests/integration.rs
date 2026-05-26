@@ -1,5 +1,5 @@
-use std::time::Duration;
 use shell_executor::execute;
+use std::time::Duration;
 
 #[test]
 fn full_pipeline() {

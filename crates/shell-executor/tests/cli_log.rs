@@ -29,7 +29,11 @@ fn cli_log_creates_file_if_missing() {
         .status()
         .expect("failed to run x");
 
-    assert!(path.exists(), "log file should have been created at {}", path.display());
+    assert!(
+        path.exists(),
+        "log file should have been created at {}",
+        path.display()
+    );
     let contents = std::fs::read_to_string(&path).unwrap();
     assert!(
         contents.contains("hello"),
@@ -61,8 +65,14 @@ fn cli_log_appends_across_runs() {
         .expect("failed to run x");
 
     let contents = std::fs::read_to_string(&path).unwrap();
-    assert!(contents.contains("First"), "log missing `First`: {contents}");
-    assert!(contents.contains("Second"), "log missing `Second`: {contents}");
+    assert!(
+        contents.contains("First"),
+        "log missing `First`: {contents}"
+    );
+    assert!(
+        contents.contains("Second"),
+        "log missing `Second`: {contents}"
+    );
     let entry_count = contents.matches("] [").count();
     assert!(
         entry_count >= 2,
@@ -87,8 +97,7 @@ fn cli_log_contains_timestamp_format() {
         .expect("failed to run x");
 
     let contents = std::fs::read_to_string(&path).unwrap();
-    let re_like =
-        contents.starts_with('[') && contents.contains('-') && contents.contains(':');
+    let re_like = contents.starts_with('[') && contents.contains('-') && contents.contains(':');
     assert!(
         re_like,
         "log should start with a `[YYYY-MM-DD HH:MM:SS]`-style timestamp, got: {contents}"
@@ -110,7 +119,10 @@ fn cli_log_success_shows_checkmark() {
         .expect("failed to run x");
 
     let contents = std::fs::read_to_string(&path).unwrap();
-    assert!(contents.contains("✓"), "success log should contain ✓, got: {contents}");
+    assert!(
+        contents.contains("✓"),
+        "success log should contain ✓, got: {contents}"
+    );
     assert!(
         contents.contains("Success cmd"),
         "success log should contain the message, got: {contents}"
@@ -132,7 +144,10 @@ fn cli_log_failure_shows_cross() {
         .expect("failed to run x");
 
     let contents = std::fs::read_to_string(&path).unwrap();
-    assert!(contents.contains("✘"), "failure log should contain ✘, got: {contents}");
+    assert!(
+        contents.contains("✘"),
+        "failure log should contain ✘, got: {contents}"
+    );
     assert!(
         contents.contains("Fail cmd"),
         "failure log should contain the message, got: {contents}"
@@ -207,9 +222,18 @@ fn cli_log_success_output_tabulated() {
         .expect("failed to run x");
 
     let contents = std::fs::read_to_string(&path).unwrap();
-    assert!(contents.contains("\tline1\n"), "missing `\\tline1\\n` in: {contents}");
-    assert!(contents.contains("\tline2\n"), "missing `\\tline2\\n` in: {contents}");
-    assert!(contents.contains("\tline3\n"), "missing `\\tline3\\n` in: {contents}");
+    assert!(
+        contents.contains("\tline1\n"),
+        "missing `\\tline1\\n` in: {contents}"
+    );
+    assert!(
+        contents.contains("\tline2\n"),
+        "missing `\\tline2\\n` in: {contents}"
+    );
+    assert!(
+        contents.contains("\tline3\n"),
+        "missing `\\tline3\\n` in: {contents}"
+    );
     let _ = std::fs::remove_file(&path);
 }
 
@@ -232,7 +256,10 @@ fn cli_log_quiet_success_omits_output() {
         .expect("failed to run x");
 
     let contents = std::fs::read_to_string(&path).unwrap();
-    assert!(contents.contains("Quiet ok"), "log missing message: {contents}");
+    assert!(
+        contents.contains("Quiet ok"),
+        "log missing message: {contents}"
+    );
     assert!(
         !contents.contains("suppressed"),
         "quiet success should not log captured output, got: {contents}"
@@ -259,7 +286,10 @@ fn cli_log_quiet_failure_includes_output() {
         .expect("failed to run x");
 
     let contents = std::fs::read_to_string(&path).unwrap();
-    assert!(contents.contains("✘"), "quiet failure log should contain ✘, got: {contents}");
+    assert!(
+        contents.contains("✘"),
+        "quiet failure log should contain ✘, got: {contents}"
+    );
     assert!(
         contents.contains("\tvisible"),
         "quiet failure should still log output as `\\tvisible`, got: {contents}"

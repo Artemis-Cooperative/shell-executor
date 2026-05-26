@@ -1,0 +1,20 @@
+# similarity-rs config (https://github.com/mizchi/similarity)
+#
+# similarity-rs auto-loads `similarity.toml` from the working directory or any
+# parent. These keys map 1:1 to the CLI flags shown by `similarity-rs --help`.
+#
+# IMPORTANT: in similarity-rs v0.5.0 the `exclude` key (and the matching
+# `--exclude` CLI flag) are NOT honored by the default function-similarity
+# analyzer — they only filter files for `--experimental-overlap` and
+# `--experimental-types`. Because of that, directory/file filtering for the
+# default mode has to be done by passing an explicit path list on the CLI.
+# See `check-similarity.sh`.
+
+# Minimum function length, in lines. The upstream default is 3, which surfaces
+# a lot of small accessor / shim functions. 5 trims noise without losing
+# real near-duplicate signals.
+min_lines = 5
+
+# Standard 0.85 similarity threshold. Lower values produce a flood of weak
+# matches; higher values miss real near-duplicates.
+threshold = 0.85

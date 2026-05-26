@@ -100,7 +100,7 @@ fn drain_remaining(rx: &Receiver<Vec<u8>>, linger: Duration) -> Vec<u8> {
 }
 
 /// Poll `child.try_wait()` until it returns Some(status) or `deadline`
-/// elapses. Returns Some(exit_code) on clean exit, None on timeout.
+/// elapses. Returns `Some(exit_code)` on clean exit, None on timeout.
 fn wait_for_exit(child: &mut (dyn Child + Send + Sync), deadline: Duration) -> Option<i32> {
     let end = Instant::now() + deadline;
     loop {
@@ -129,32 +129,32 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 #[test]
 fn interactive_single_command_exits_zero_for_true() {
     let (mut child, _master, _rx) = spawn_in_pty(&["--interactive", "true"]);
-    let code = wait_for_exit(&mut *child, Duration::from_secs(10))
-        .expect("child did not exit within 10s");
+    let code =
+        wait_for_exit(&mut *child, Duration::from_secs(10)).expect("child did not exit within 10s");
     assert_eq!(code, 0);
 }
 
 #[test]
 fn interactive_single_command_exits_one_for_false() {
     let (mut child, _master, _rx) = spawn_in_pty(&["--interactive", "false"]);
-    let code = wait_for_exit(&mut *child, Duration::from_secs(10))
-        .expect("child did not exit within 10s");
+    let code =
+        wait_for_exit(&mut *child, Duration::from_secs(10)).expect("child did not exit within 10s");
     assert_eq!(code, 1);
 }
 
 #[test]
 fn interactive_propagates_exit_code_42() {
     let (mut child, _master, _rx) = spawn_in_pty(&["-i", "exit 42"]);
-    let code = wait_for_exit(&mut *child, Duration::from_secs(10))
-        .expect("child did not exit within 10s");
+    let code =
+        wait_for_exit(&mut *child, Duration::from_secs(10)).expect("child did not exit within 10s");
     assert_eq!(code, 42);
 }
 
 #[test]
 fn interactive_enters_and_exits_alt_screen() {
     let (mut child, _master, rx) = spawn_in_pty(&["-i", "true"]);
-    let code = wait_for_exit(&mut *child, Duration::from_secs(10))
-        .expect("child did not exit within 10s");
+    let code =
+        wait_for_exit(&mut *child, Duration::from_secs(10)).expect("child did not exit within 10s");
     assert_eq!(code, 0);
     let bytes = drain_remaining(&rx, Duration::from_millis(500));
     assert!(
@@ -170,8 +170,8 @@ fn interactive_enters_and_exits_alt_screen() {
 #[test]
 fn interactive_prints_success_line_after_alt_screen() {
     let (mut child, _master, rx) = spawn_in_pty(&["-i", "true", "--msg", "AltDone"]);
-    let code = wait_for_exit(&mut *child, Duration::from_secs(10))
-        .expect("child did not exit within 10s");
+    let code =
+        wait_for_exit(&mut *child, Duration::from_secs(10)).expect("child did not exit within 10s");
     assert_eq!(code, 0);
     let bytes = drain_remaining(&rx, Duration::from_millis(750));
     let leave = find(&bytes, b"\x1b[?1049l").expect("alt-screen leave not found");
@@ -190,8 +190,8 @@ fn interactive_prints_success_line_after_alt_screen() {
 #[test]
 fn interactive_failure_prints_cross_after_alt_screen() {
     let (mut child, _master, rx) = spawn_in_pty(&["-i", "false", "--msg", "Boom"]);
-    let code = wait_for_exit(&mut *child, Duration::from_secs(10))
-        .expect("child did not exit within 10s");
+    let code =
+        wait_for_exit(&mut *child, Duration::from_secs(10)).expect("child did not exit within 10s");
     assert_eq!(code, 1);
     let bytes = drain_remaining(&rx, Duration::from_millis(750));
     let leave = find(&bytes, b"\x1b[?1049l").expect("alt-screen leave not found");
@@ -233,8 +233,7 @@ fn tui_parallel_prints_summary_block_on_main_screen() {
         .expect("TUI did not auto-exit within 15s");
     assert_eq!(code, 0);
     let bytes = drain_remaining(&rx, Duration::from_secs(1));
-    let leave =
-        find(&bytes, b"\x1b[?1049l").expect("expected alt-screen leave from TUI exit");
+    let leave = find(&bytes, b"\x1b[?1049l").expect("expected alt-screen leave from TUI exit");
     // After leaving alt screen, the standard parallel summary block lists
     // each child label (the raw command string by default).
     let after = &bytes[leave..];

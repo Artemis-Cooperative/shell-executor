@@ -56,7 +56,7 @@ fn validator_passing_rescues_failed_group() {
 }
 
 /// Validator failing on an all-pass group does NOT poison success.
-/// (Per spec: exit 0 if all_succeed OR validator passes.)
+/// (Per spec: exit 0 if `all_succeed` OR validator passes.)
 #[test]
 fn validator_failing_does_not_poison_passing_group() {
     let status = x_bin()
@@ -211,7 +211,10 @@ fn parallel_log_records_group_entry_and_children() {
         .expect("failed to run x");
 
     let contents = std::fs::read_to_string(&path).unwrap();
-    assert!(contents.contains("duo"), "log missing parent label `duo`: {contents}");
+    assert!(
+        contents.contains("duo"),
+        "log missing parent label `duo`: {contents}"
+    );
     assert!(
         contents.contains("echo first"),
         "log missing child label `echo first`: {contents}"

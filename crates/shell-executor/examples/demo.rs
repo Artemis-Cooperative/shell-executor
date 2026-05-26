@@ -5,9 +5,7 @@ fn main() {
     println!("=== Shell Executor Demo ===\n");
 
     // 1. Simple success
-    execute("echo 'Hello, world!'")
-        .message("Greeting")
-        .run();
+    execute("echo 'Hello, world!'").message("Greeting").run();
 
     // 2. Simple failure
     execute("ls /nonexistent_path_12345")

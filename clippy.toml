@@ -1,0 +1,21 @@
+# Complexity thresholds
+cognitive-complexity-threshold = 25
+too-many-arguments-threshold = 7
+too-many-lines-threshold = 100
+
+# Allow common short identifiers (single-char vars used in closures, iterators, etc.)
+allowed-idents-below-min-chars = ["_", "f", "i", "n", "x", "v", "e", "s", "T", "S", "E", "R", "F", "B", "K", "V"]
+
+# Test-specific relaxations — clippy auto-detects #[cfg(test)] and #[test] contexts
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+
+# Avoid suggesting changes that break the public API
+avoid-breaking-exported-api = true
+
+# Domain-specific identifier patterns for doc-valid-idents
+doc-valid-idents = ["TUI", "PTY", "ANSI", "CLI", "JSON", "TOML", "YAML", "TODO", "GitHub", "mprocs", "UTF-8"]

@@ -1,15 +1,22 @@
-use std::io::{Write, stdout};
+#![expect(
+    clippy::print_stdout,
+    reason = "CLI tool intentionally writes to stdout for user-facing output"
+)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "Mutex poisoning is treated as a fatal logic error in this single-process tool"
+)]
+
+use std::fmt::Write as _;
+use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
-
 use crate::{
-    CommandOutput, RunReport, RunStatus, derive_display_message, format_elapsed, read_bounded,
+    derive_display_message, format_elapsed, read_bounded, CommandOutput, RunReport, RunStatus,
 };
 
 const DEFAULT_MAX_OUTPUT: usize = 10 * 1024 * 1024;
@@ -119,7 +126,7 @@ impl ParallelGroup {
         let child_labels: Vec<String> = self
             .commands
             .iter()
-            .map(|c| derive_display_message(&None, c))
+            .map(|c| derive_display_message(None, c))
             .collect();
 
         let states: Vec<Arc<Mutex<ChildState>>> = (0..n)
@@ -130,7 +137,7 @@ impl ParallelGroup {
         let handles = self.spawn_workers(&states);
 
         // Reserve N+1 lines for in-place rendering, position cursor at parent line.
-        for _ in 0..(n + 1) {
+        for _ in 0..=n {
             println!();
         }
         print!("\x1b[{}F", n + 1);
@@ -157,7 +164,7 @@ impl ParallelGroup {
             );
 
             // Move cursor back to parent line for the next tick.
-            print!("\x1b[{}F", n);
+            print!("\x1b[{n}F");
             let _ = stdout().flush();
 
             spinner_idx = (spinner_idx + 1) % spinner_chars.len();
@@ -221,7 +228,7 @@ impl ParallelGroup {
         let child_labels: Vec<String> = self
             .commands
             .iter()
-            .map(|c| derive_display_message(&None, c))
+            .map(|c| derive_display_message(None, c))
             .collect();
 
         let states: Vec<Arc<Mutex<ChildState>>> = (0..n)
@@ -263,10 +270,7 @@ impl ParallelGroup {
         }
     }
 
-    fn spawn_workers(
-        &self,
-        states: &[Arc<Mutex<ChildState>>],
-    ) -> Vec<thread::JoinHandle<()>> {
+    fn spawn_workers(&self, states: &[Arc<Mutex<ChildState>>]) -> Vec<thread::JoinHandle<()>> {
         self.commands
             .iter()
             .enumerate()
@@ -289,6 +293,10 @@ pub(crate) enum ChildState {
     },
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "ownership crosses the spawned-thread boundary"
+)]
 fn run_child(cmd: String, state: Arc<Mutex<ChildState>>, max_output: usize) {
     let start = Instant::now();
 
@@ -315,12 +323,14 @@ fn run_child(cmd: String, state: Arc<Mutex<ChildState>>, max_output: usize) {
     };
 
     // Drain pipes concurrently so the child doesn't block on a full pipe.
-    let stdout_reader = child.stdout.take().map(|out| {
-        thread::spawn(move || read_bounded(out, max_output))
-    });
-    let stderr_reader = child.stderr.take().map(|err| {
-        thread::spawn(move || read_bounded(err, max_output))
-    });
+    let stdout_reader = child
+        .stdout
+        .take()
+        .map(|out| thread::spawn(move || read_bounded(out, max_output)));
+    let stderr_reader = child
+        .stderr
+        .take()
+        .map(|err| thread::spawn(move || read_bounded(err, max_output)));
 
     let wait_result = child.wait();
     let stdout_str = stdout_reader
@@ -334,7 +344,10 @@ fn run_child(cmd: String, state: Arc<Mutex<ChildState>>, max_output: usize) {
     let signal_num: Option<i32> = {
         #[cfg(unix)]
         {
-            wait_result.as_ref().ok().and_then(|s| s.signal())
+            wait_result
+                .as_ref()
+                .ok()
+                .and_then(std::os::unix::process::ExitStatusExt::signal)
         }
         #[cfg(not(unix))]
         {
@@ -344,7 +357,7 @@ fn run_child(cmd: String, state: Arc<Mutex<ChildState>>, max_output: usize) {
     let raw_exit = wait_result
         .as_ref()
         .ok()
-        .and_then(|s| s.code())
+        .and_then(std::process::ExitStatus::code)
         .unwrap_or(1);
 
     let interrupted = signal_num.is_some();
@@ -356,7 +369,7 @@ fn run_child(cmd: String, state: Arc<Mutex<ChildState>>, max_output: usize) {
         RunStatus::Failure
     };
     let exit_code = if interrupted {
-        signal_num.map(|n| 128 + n).unwrap_or(1)
+        signal_num.map_or(1, |n| 128 + n)
     } else {
         raw_exit
     };
@@ -401,7 +414,9 @@ fn render_in_place(
                     };
                     (spinner_char.to_string(), ts)
                 }
-                ChildState::Done { status, elapsed, .. } => {
+                ChildState::Done {
+                    status, elapsed, ..
+                } => {
                     let icon = colored_icon(*status);
                     let ts = if show_time {
                         format!(" {}", format_elapsed(*elapsed))
@@ -466,7 +481,10 @@ pub(crate) fn print_final_block(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "write_log_entry aggregates many independent log fields"
+)]
 pub(crate) fn write_log_entry(
     log_path: &PathBuf,
     states: &[Arc<Mutex<ChildState>>],
@@ -497,10 +515,7 @@ pub(crate) fn write_log_entry(
         };
         let icon = plain_icon(*status);
         entry.push('\t');
-        entry.push_str(&format!(
-            "[ {icon} {} ] {label}\n",
-            format_elapsed(*elapsed)
-        ));
+        let _ = writeln!(entry, "[ {icon} {} ] {label}", format_elapsed(*elapsed));
 
         if include_bodies {
             let show_output = !matches!(status, RunStatus::Success) || !quiet;
@@ -566,7 +581,7 @@ pub(crate) fn compute_parent_status(states: &[Arc<Mutex<ChildState>>]) -> RunSta
 }
 
 pub(crate) fn status_to_exit_code(status: RunStatus) -> i32 {
-    if matches!(status, RunStatus::Success) { 0 } else { 1 }
+    i32::from(!matches!(status, RunStatus::Success))
 }
 
 #[cfg(test)]
@@ -678,8 +693,14 @@ mod tests {
             .run();
 
         let contents = std::fs::read_to_string(&path).unwrap();
-        assert!(!contents.contains("\t\tsilent"), "quiet success body should be omitted");
-        assert!(contents.contains("\t\tloud"), "failure body should still be present");
+        assert!(
+            !contents.contains("\t\tsilent"),
+            "quiet success body should be omitted"
+        );
+        assert!(
+            contents.contains("\t\tloud"),
+            "failure body should still be present"
+        );
         let _ = std::fs::remove_file(&path);
     }
 }

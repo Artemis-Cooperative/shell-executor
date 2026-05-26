@@ -7,6 +7,11 @@
 //! child has finished and then prints the standard `--parallel` summary
 //! block on the main screen.
 
+#![expect(
+    clippy::print_stdout,
+    reason = "CLI tool intentionally writes to stdout for user-facing output"
+)]
+
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -18,20 +23,22 @@ use crossterm::event::{
     KeyModifiers, MouseEventKind,
 };
 use crossterm::execute;
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::prelude::Stylize;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget,
+};
 use ratatui::Frame;
-use ratatui::prelude::Stylize;
 use vt100::Parser;
 
 use crate::parallel::{
-    ChildState, compute_parent_status, print_final_block, status_to_exit_code, write_log_entry,
+    compute_parent_status, print_final_block, status_to_exit_code, write_log_entry, ChildState,
 };
-use crate::{CommandOutput, RunReport, RunStatus, derive_display_message};
+use crate::{derive_display_message, CommandOutput, RunReport, RunStatus};
 
 const SCROLLBACK_LINES: usize = 10_000;
 const TICK_MS: u64 = 50;
@@ -109,7 +116,7 @@ pub(crate) fn run_report(
             Ok(p) => panes.push(p),
             Err(e) => {
                 // Insert a synthetic already-failed pane so we can still finish the run.
-                let label = derive_display_message(&None, cmd);
+                let label = derive_display_message(None, cmd);
                 let now = Instant::now();
                 let mut parser = Parser::new(pane_size.rows, pane_size.cols, SCROLLBACK_LINES);
                 let msg = format!("Failed to spawn: {e}\r\n");
@@ -197,13 +204,12 @@ pub(crate) fn run_succinct_report(
 
     let mut panes: Vec<Pane> = Vec::with_capacity(n);
     for cmd in commands {
-        match spawn_pane(cmd, pane_size) {
-            Ok(p) => panes.push(p),
-            Err(_) => {
-                let label = derive_display_message(&None, cmd);
-                let parser = Parser::new(pane_size.rows, pane_size.cols, SCROLLBACK_LINES);
-                panes.push(synthetic_failed_pane(label, parser, Instant::now()));
-            }
+        if let Ok(p) = spawn_pane(cmd, pane_size) {
+            panes.push(p);
+        } else {
+            let label = derive_display_message(None, cmd);
+            let parser = Parser::new(pane_size.rows, pane_size.cols, SCROLLBACK_LINES);
+            panes.push(synthetic_failed_pane(label, parser, Instant::now()));
         }
     }
 
@@ -211,12 +217,21 @@ pub(crate) fn run_succinct_report(
     // Wait silently for all children.
     loop {
         let mut all_done = true;
-        for p in panes.iter_mut() {
+        for p in &mut panes {
             if matches!(p.status, PaneStatus::Running) {
                 match p.child.try_wait() {
                     Ok(Some(status)) => {
+                        #[expect(
+                            clippy::cast_possible_wrap,
+                            clippy::as_conversions,
+                            reason = "exit codes are at most 255 in practice; wide cast preserves the value"
+                        )]
                         let code = status.exit_code() as i32;
-                        let run_status = if code == 0 { RunStatus::Success } else { RunStatus::Failure };
+                        let run_status = if code == 0 {
+                            RunStatus::Success
+                        } else {
+                            RunStatus::Failure
+                        };
                         p.status = PaneStatus::Done(run_status, code);
                         p.finished_at = Some(Instant::now());
                     }
@@ -264,7 +279,9 @@ fn sidebar_width(term_cols: u16) -> u16 {
 
 fn pane_pty_size(term_cols: u16, term_rows: u16, sidebar_w: u16) -> PtySize {
     let inner_cols = term_cols.saturating_sub(sidebar_w).saturating_sub(2); // 2 = borders
-    let inner_rows = term_rows.saturating_sub(STATUS_BAR_HEIGHT).saturating_sub(2);
+    let inner_rows = term_rows
+        .saturating_sub(STATUS_BAR_HEIGHT)
+        .saturating_sub(2);
     PtySize {
         rows: inner_rows.max(3),
         cols: inner_cols.max(10),
@@ -304,7 +321,11 @@ fn spawn_pane(cmd: &str, size: PtySize) -> io::Result<Pane> {
         .take_writer()
         .map_err(|e| io::Error::other(format!("take_writer: {e}")))?;
 
-    let parser = Arc::new(Mutex::new(Parser::new(size.rows, size.cols, SCROLLBACK_LINES)));
+    let parser = Arc::new(Mutex::new(Parser::new(
+        size.rows,
+        size.cols,
+        SCROLLBACK_LINES,
+    )));
     let parser_for_reader = Arc::clone(&parser);
 
     thread::spawn(move || {
@@ -312,19 +333,18 @@ fn spawn_pane(cmd: &str, size: PtySize) -> io::Result<Pane> {
         let mut buf = [0u8; 4096];
         loop {
             match reader.read(&mut buf) {
-                Ok(0) => break,
+                Ok(0) | Err(_) => break,
                 Ok(n) => {
                     if let Ok(mut p) = parser_for_reader.lock() {
                         p.process(&buf[..n]);
                     }
                 }
-                Err(_) => break,
             }
         }
     });
 
     Ok(Pane {
-        label: derive_display_message(&None, cmd),
+        label: derive_display_message(None, cmd),
         parser,
         master: Arc::new(Mutex::new(pair.master)),
         writer: Arc::new(Mutex::new(writer)),
@@ -336,6 +356,10 @@ fn spawn_pane(cmd: &str, size: PtySize) -> io::Result<Pane> {
     })
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "dummy PTY fallback; allocation failures here are fatal anyway"
+)]
 fn synthetic_failed_pane(label: String, parser: Parser, now: Instant) -> Pane {
     // Used when spawn fails: a pane that is already Done(Failure).
     // We can't easily fabricate a real Child/MasterPty/Writer, so this
@@ -343,11 +367,19 @@ fn synthetic_failed_pane(label: String, parser: Parser, now: Instant) -> Pane {
     // Use a dummy PTY pair to satisfy the type.
     let pty_system = native_pty_system();
     let dummy = pty_system
-        .openpty(PtySize { rows: 1, cols: 1, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .expect("dummy pty for failed pane");
     let writer = dummy.master.take_writer().expect("dummy writer");
     // Spawn a no-op child on the dummy slave so we have a Child to hold.
-    let child = dummy.slave.spawn_command(CommandBuilder::new("true")).expect("dummy child");
+    let child = dummy
+        .slave
+        .spawn_command(CommandBuilder::new("true"))
+        .expect("dummy child");
     drop(dummy.slave);
     Pane {
         label,
@@ -368,11 +400,7 @@ enum LoopOutcome {
     Errored,
 }
 
-fn event_loop(
-    panes: &mut [Pane],
-    parent_label: &str,
-    show_time: bool,
-) -> io::Result<LoopOutcome> {
+fn event_loop(panes: &mut [Pane], parent_label: &str, show_time: bool) -> io::Result<LoopOutcome> {
     let mut terminal = ratatui::init();
     let mut stdout = io::stdout();
     let _ = execute!(stdout, EnableMouseCapture);
@@ -388,8 +416,17 @@ fn event_loop(
             for p in panes.iter_mut() {
                 if let PaneStatus::Running = p.status {
                     if let Ok(Some(status)) = p.child.try_wait() {
+                        #[expect(
+                            clippy::cast_possible_wrap,
+                            clippy::as_conversions,
+                            reason = "exit codes are at most 255 in practice; wide cast preserves the value"
+                        )]
                         let code = status.exit_code() as i32;
-                        let run_status = if code == 0 { RunStatus::Success } else { RunStatus::Failure };
+                        let run_status = if code == 0 {
+                            RunStatus::Success
+                        } else {
+                            RunStatus::Failure
+                        };
                         p.status = PaneStatus::Done(run_status, code);
                         p.finished_at = Some(Instant::now());
                     }
@@ -400,7 +437,15 @@ fn event_loop(
 
             // Render.
             terminal.draw(|frame| {
-                draw_frame(frame, panes, selected, mode, &mut list_state, parent_label, show_time);
+                draw_frame(
+                    frame,
+                    panes,
+                    selected,
+                    mode,
+                    &mut list_state,
+                    parent_label,
+                    show_time,
+                );
             })?;
 
             if all_done && mode != Mode::ConfirmQuit {
@@ -466,9 +511,14 @@ fn event_loop(
                                         }
                                         NavAction::ScrollUp => {
                                             if let Some(p) = panes.get_mut(selected) {
-                                                p.scrollback = p.scrollback.saturating_add(5).min(SCROLLBACK_LINES);
+                                                p.scrollback = p
+                                                    .scrollback
+                                                    .saturating_add(5)
+                                                    .min(SCROLLBACK_LINES);
                                                 if let Ok(mut parser) = p.parser.lock() {
-                                                    parser.screen_mut().set_scrollback(p.scrollback);
+                                                    parser
+                                                        .screen_mut()
+                                                        .set_scrollback(p.scrollback);
                                                 }
                                             }
                                         }
@@ -476,7 +526,9 @@ fn event_loop(
                                             if let Some(p) = panes.get_mut(selected) {
                                                 p.scrollback = p.scrollback.saturating_sub(5);
                                                 if let Ok(mut parser) = p.parser.lock() {
-                                                    parser.screen_mut().set_scrollback(p.scrollback);
+                                                    parser
+                                                        .screen_mut()
+                                                        .set_scrollback(p.scrollback);
                                                 }
                                             }
                                         }
@@ -499,7 +551,7 @@ fn event_loop(
                                 }
                             }
                             Mode::ConfirmQuit => match key.code {
-                                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                KeyCode::Char('y' | 'Y') => {
                                     return Ok(LoopOutcome::QuitByUser);
                                 }
                                 _ => {
@@ -557,7 +609,12 @@ fn nav_key(key: KeyEvent, n: usize) -> Option<NavAction> {
         KeyCode::Char('g') => Some(NavAction::Select(0)),
         KeyCode::Char('G') => Some(NavAction::Select(n.saturating_sub(1))),
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-            let idx = (c as u8 - b'1') as usize;
+            #[expect(
+                clippy::as_conversions,
+                reason = "guard restricts c to ASCII digits 1-9; cast is lossless"
+            )]
+            let digit = c as u8;
+            let idx = usize::from(digit - b'1');
             Some(NavAction::Select(idx))
         }
         KeyCode::PageUp => Some(NavAction::ScrollUp),
@@ -600,13 +657,13 @@ fn draw_frame(
             let icon = match p.status {
                 PaneStatus::Running => Span::raw("●").yellow(),
                 PaneStatus::Done(RunStatus::Success, _) => Span::raw("✓").green(),
-                PaneStatus::Done(RunStatus::Failure, _) | PaneStatus::Done(RunStatus::Timeout, _) => {
+                PaneStatus::Done(RunStatus::Failure | RunStatus::Timeout, _) => {
                     Span::raw("✘").red()
                 }
                 PaneStatus::Done(RunStatus::Interrupted, _) => Span::raw("!").yellow(),
             };
             let elapsed = format_mmss(p.elapsed());
-            let label = truncate_label(&p.label, sidebar_w.saturating_sub(10) as usize);
+            let label = truncate_label(&p.label, usize::from(sidebar_w.saturating_sub(10)));
             let line = Line::from(vec![
                 icon,
                 Span::raw(" "),
@@ -625,20 +682,30 @@ fn draw_frame(
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Plain)
-                .title(format!(" {} ", truncate_label(parent_label, sidebar_w.saturating_sub(4) as usize))),
+                .title(format!(
+                    " {} ",
+                    truncate_label(parent_label, usize::from(sidebar_w.saturating_sub(4)))
+                )),
         )
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
     frame.render_stateful_widget(sidebar, sidebar_area, list_state);
 
     // Main pane: render focused pane's vt100 screen.
     let main_border_style = if matches!(mode, Mode::Input) {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
     let main_title = panes
         .get(selected)
-        .map(|p| format!(" {} ", truncate_label(&p.label, main_area.width.saturating_sub(4) as usize)))
+        .map(|p| {
+            format!(
+                " {} ",
+                truncate_label(&p.label, usize::from(main_area.width.saturating_sub(4)))
+            )
+        })
         .unwrap_or_default();
     let main_block = Block::default()
         .borders(Borders::ALL)
@@ -669,8 +736,7 @@ fn draw_frame(
         Mode::ConfirmQuit => Style::default().bg(Color::Red).fg(Color::White),
         Mode::Nav => Style::default().bg(Color::DarkGray).fg(Color::White),
     };
-    let status =
-        Paragraph::new(status_text).style(status_style);
+    let status = Paragraph::new(status_text).style(status_style);
     frame.render_widget(status, status_area);
 
     // Show elapsed time in status bar if requested by --time.
@@ -743,9 +809,8 @@ struct Vt100Widget {
 
 impl Widget for Vt100Widget {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let parser = match self.parser.lock() {
-            Ok(p) => p,
-            Err(_) => return,
+        let Ok(parser) = self.parser.lock() else {
+            return;
         };
         let screen = parser.screen();
         let (vt_rows, vt_cols) = screen.size();
@@ -754,9 +819,8 @@ impl Widget for Vt100Widget {
 
         for row in 0..max_rows {
             for col in 0..max_cols {
-                let cell = match screen.cell(row, col) {
-                    Some(c) => c,
-                    None => continue,
+                let Some(cell) = screen.cell(row, col) else {
+                    continue;
                 };
                 let contents = cell.contents();
                 let ch = if contents.is_empty() { " " } else { contents };
@@ -804,7 +868,10 @@ fn map_color(c: vt100::Color, default: Color) -> Color {
 }
 
 fn key_to_bytes(key: KeyEvent) -> Option<Vec<u8>> {
-    use KeyCode::*;
+    use KeyCode::{
+        BackTab, Backspace, Char, Delete, Down, End, Enter, Esc, Home, Insert, Left, Null,
+        PageDown, PageUp, Right, Tab, Up, F,
+    };
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
     let mut out: Vec<u8> = Vec::new();
@@ -812,13 +879,16 @@ fn key_to_bytes(key: KeyEvent) -> Option<Vec<u8>> {
     let body: Vec<u8> = match key.code {
         Char(c) => {
             if ctrl {
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "char->u8 truncation; non-ASCII falls through the ascii_alphabetic check below"
+                )]
                 let b = c.to_ascii_lowercase() as u8;
                 if b.is_ascii_alphabetic() {
                     vec![b & 0x1f]
                 } else {
                     match c {
-                        ' ' => vec![0],
-                        '@' => vec![0],
+                        ' ' | '@' => vec![0],
                         '[' => vec![0x1b],
                         '\\' => vec![0x1c],
                         ']' => vec![0x1d],
@@ -882,8 +952,7 @@ fn kill_all(panes: &mut [Pane]) {
     let deadline = Instant::now() + Duration::from_millis(KILL_GRACE_MS);
     while Instant::now() < deadline {
         let any_alive = panes.iter_mut().any(|p| {
-            matches!(p.status, PaneStatus::Running)
-                && !matches!(p.child.try_wait(), Ok(Some(_)))
+            matches!(p.status, PaneStatus::Running) && !matches!(p.child.try_wait(), Ok(Some(_)))
         });
         if !any_alive {
             break;
@@ -905,28 +974,29 @@ fn finalize_pane_statuses(panes: &mut [Pane]) {
             // Wait briefly for the child to actually exit so we get a real status.
             let deadline = Instant::now() + Duration::from_millis(200);
             loop {
-                match p.child.try_wait() {
-                    Ok(Some(status)) => {
-                        let code = status.exit_code() as i32;
-                        // Killed children typically come back as Interrupted.
-                        let run_status = if code == 0 {
-                            RunStatus::Success
-                        } else {
-                            RunStatus::Interrupted
-                        };
-                        p.status = PaneStatus::Done(run_status, code);
-                        p.finished_at = Some(Instant::now());
-                        break;
-                    }
-                    _ => {
-                        if Instant::now() >= deadline {
-                            p.status = PaneStatus::Done(RunStatus::Interrupted, 1);
-                            p.finished_at = Some(Instant::now());
-                            break;
-                        }
-                        thread::sleep(Duration::from_millis(20));
-                    }
+                if let Ok(Some(status)) = p.child.try_wait() {
+                    #[expect(
+                        clippy::cast_possible_wrap,
+                        clippy::as_conversions,
+                        reason = "exit codes are at most 255 in practice; wide cast preserves the value"
+                    )]
+                    let code = status.exit_code() as i32;
+                    // Killed children typically come back as Interrupted.
+                    let run_status = if code == 0 {
+                        RunStatus::Success
+                    } else {
+                        RunStatus::Interrupted
+                    };
+                    p.status = PaneStatus::Done(run_status, code);
+                    p.finished_at = Some(Instant::now());
+                    break;
                 }
+                if Instant::now() >= deadline {
+                    p.status = PaneStatus::Done(RunStatus::Interrupted, 1);
+                    p.finished_at = Some(Instant::now());
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
             }
         }
     }

@@ -12,10 +12,7 @@ use common::x_bin;
 /// `x "echo hi"` (no flags) — final wrapper must not contain `HH:MM:SS`.
 #[test]
 fn default_omits_duration() {
-    let output = x_bin()
-        .arg("echo hi")
-        .output()
-        .expect("failed to run x");
+    let output = x_bin().arg("echo hi").output().expect("failed to run x");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -71,10 +68,7 @@ fn time_flag_includes_duration() {
 /// `x "false"` (no flags) — failure marker is shown but without `HH:MM:SS`.
 #[test]
 fn default_omits_duration_on_failure() {
-    let output = x_bin()
-        .arg("false")
-        .output()
-        .expect("failed to run x");
+    let output = x_bin().arg("false").output().expect("failed to run x");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

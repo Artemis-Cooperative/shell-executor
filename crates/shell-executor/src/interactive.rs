@@ -5,6 +5,12 @@
 //! duration of the command; on exit, the alt screen is left and the
 //! pass/fail status line is printed on the main screen.
 
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "CLI tool intentionally writes to stdout/stderr for user-facing output"
+)]
+
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 #[cfg(unix)]
@@ -13,9 +19,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
-use crate::{RunReport, RunStatus, format_elapsed};
+use crate::{format_elapsed, RunReport, RunStatus};
 
 struct RawModeGuard;
 impl Drop for RawModeGuard {
@@ -45,6 +51,10 @@ impl Drop for AltScreenGuard {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "single coherent PTY lifecycle; splitting would obscure control flow"
+)]
 pub(crate) fn run_interactive_report(
     command: &str,
     display_message: &str,
@@ -130,8 +140,8 @@ pub(crate) fn run_interactive_report(
             exit_code: 1,
         };
     }
-    let _raw_guard = RawModeGuard;
-    let _alt_guard = AltScreenGuard::enter();
+    let raw_guard = RawModeGuard;
+    let alt_guard = AltScreenGuard::enter();
 
     #[cfg(unix)]
     {
@@ -161,9 +171,8 @@ pub(crate) fn run_interactive_report(
         let mut buf = [0u8; 4096];
         loop {
             let n = match reader.read(&mut buf) {
-                Ok(0) => break,
+                Ok(0) | Err(_) => break,
                 Ok(n) => n,
-                Err(_) => break,
             };
             let mut out = io::stdout().lock();
             if out.write_all(&buf[..n]).is_err() {
@@ -181,9 +190,8 @@ pub(crate) fn run_interactive_report(
         let mut buf = [0u8; 256];
         loop {
             let n = match handle.read(&mut buf) {
-                Ok(0) => break,
+                Ok(0) | Err(_) => break,
                 Ok(n) => n,
-                Err(_) => break,
             };
             if writer.write_all(&buf[..n]).is_err() {
                 break;
@@ -195,7 +203,15 @@ pub(crate) fn run_interactive_report(
     let start = Instant::now();
     let exit_code: i32 = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status.exit_code() as i32,
+            Ok(Some(status)) => {
+                #[expect(
+                    clippy::cast_possible_wrap,
+                    clippy::as_conversions,
+                    reason = "exit codes are at most 255 in practice; wide cast preserves the value"
+                )]
+                let code = status.exit_code() as i32;
+                break code;
+            }
             Ok(None) => {}
             Err(_) => break 1,
         }
@@ -208,8 +224,8 @@ pub(crate) fn run_interactive_report(
     // Exit alt screen first (so the status line lands on the main screen
     // where the user typed the command), then disable raw mode so println
     // line endings get translated normally.
-    drop(_alt_guard);
-    drop(_raw_guard);
+    drop(alt_guard);
+    drop(raw_guard);
 
     let time_slot = if show_time {
         format!(" {final_time}")
