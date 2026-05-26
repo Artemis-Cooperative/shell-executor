@@ -4,11 +4,10 @@
 //! segment (`[ ✓ ] message`). Passing `--time` brings the segment back
 //! (`[ ✓ 00:00:00 ] message`).
 
-use std::process::Command;
+#[allow(dead_code)]
+mod common;
 
-fn x_bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_x"))
-}
+use common::x_bin;
 
 /// `x "echo hi"` (no flags) — final wrapper must not contain `HH:MM:SS`.
 #[test]

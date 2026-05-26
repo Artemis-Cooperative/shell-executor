@@ -8,11 +8,10 @@
 //!   Note: `-v` is NOT a short alias for `--verbose` because `-v` is taken by
 //!   `--validator`. `--verbose` is long-only.
 
-use std::process::Command;
+#[allow(dead_code)]
+mod common;
 
-fn x_bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_x"))
-}
+use common::x_bin;
 
 // ---------------------------------------------------------------------------
 // Baseline: confirm the wrapper IS present in default mode so the negative

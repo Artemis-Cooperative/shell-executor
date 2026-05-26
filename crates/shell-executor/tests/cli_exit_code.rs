@@ -9,25 +9,10 @@
 //! - Signal-killed main: non-zero (specific value left to the implementer;
 //!   reasonable choices include 1, or 128 + signum a la POSIX shells)
 
-use std::path::PathBuf;
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+#[allow(dead_code)]
+mod common;
 
-fn x_bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_x"))
-}
-
-static MARKER_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn fresh_marker(label: &str) -> PathBuf {
-    let n = MARKER_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let path = std::env::temp_dir().join(format!(
-        "shell_executor_exit_code_{label}_{}_{n}.marker",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&path);
-    path
-}
+use common::{fresh_temp_path, x_bin};
 
 /// `x true` → exit 0.
 #[test]
@@ -215,7 +200,7 @@ fn signal_killed_main_exits_nonzero() {
 /// file) that we then assert is absent.
 #[test]
 fn validator_skipped_on_timeout_exits_124() {
-    let marker = fresh_marker("timeout_skip");
+    let marker = fresh_temp_path("timeout_skip", "marker");
     let validator_cmd = format!("touch {}; exit 0", marker.display());
 
     let status = x_bin()
@@ -246,7 +231,7 @@ fn validator_skipped_on_timeout_exits_124() {
 #[cfg(unix)]
 #[test]
 fn signal_killed_main_with_validator_propagates_signal_code() {
-    let marker = fresh_marker("signal_skip");
+    let marker = fresh_temp_path("signal_skip", "marker");
     let validator_cmd = format!("touch {}; exit 0", marker.display());
 
     let status = x_bin()

@@ -4,25 +4,10 @@
 //! main command's exit code when determining overall pass/fail — except when
 //! the main command timed out or was interrupted by a signal.
 
-use std::path::PathBuf;
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+#[allow(dead_code)]
+mod common;
 
-fn x_bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_x"))
-}
-
-static MARKER_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn fresh_marker(label: &str) -> PathBuf {
-    let n = MARKER_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let path = std::env::temp_dir().join(format!(
-        "shell_executor_validator_{label}_{}_{n}.marker",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&path);
-    path
-}
+use common::{fresh_temp_path, x_bin};
 
 /// Main succeeds, validator succeeds → overall success (exit 0).
 #[test]
@@ -43,7 +28,7 @@ fn validator_short_flag_main_pass_validator_pass() {
 /// Verifies the validator actually ran by checking a side-effect marker file.
 #[test]
 fn validator_short_flag_main_pass_validator_fail() {
-    let marker = fresh_marker("pass_then_fail");
+    let marker = fresh_temp_path("pass_then_fail", "marker");
     let validator_cmd = format!("touch {}; exit 1", marker.display());
 
     let status = x_bin()
@@ -83,7 +68,7 @@ fn validator_overrides_failed_main_command() {
 /// Verifies validator ran (it must run even though main failed).
 #[test]
 fn validator_main_fail_validator_fail() {
-    let marker = fresh_marker("fail_fail");
+    let marker = fresh_temp_path("fail_fail", "marker");
     let validator_cmd = format!("touch {}; exit 2", marker.display());
 
     let status = x_bin()
@@ -123,7 +108,7 @@ fn validator_long_flag_main_pass_validator_pass() {
 /// Verifies the long-form flag actually parses by checking the validator's side effect.
 #[test]
 fn validator_long_flag_validator_fail_overrides_main_pass() {
-    let marker = fresh_marker("long_fail");
+    let marker = fresh_temp_path("long_fail", "marker");
     let validator_cmd = format!("touch {}; exit 1", marker.display());
 
     let status = x_bin()
