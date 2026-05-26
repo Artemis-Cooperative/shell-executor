@@ -2,7 +2,10 @@ use shell_executor::execute;
 use std::time::Duration;
 
 fn main() {
-    println!("=== Shell Executor Demo ===\n");
+    #[allow(clippy::print_stdout, reason = "demo example intentionally prints to stdout")]
+    {
+        println!("=== Shell Executor Demo ===\n");
+    }
 
     // 1. Simple success
     execute("echo 'Hello, world!'").message("Greeting").run();
@@ -33,5 +36,8 @@ fn main() {
     // 6. Minimal usage — no message, uses command as label
     execute("echo done").run();
 
-    println!("\n=== Demo Complete ===");
+    #[allow(clippy::print_stdout, reason = "demo example intentionally prints to stdout")]
+    {
+        println!("\n=== Demo Complete ===");
+    }
 }

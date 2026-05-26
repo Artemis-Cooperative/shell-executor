@@ -17,7 +17,7 @@
 //! from "body leak", these tests choose a body token (e.g. `hiddenbody`) that
 //! does NOT appear in the command-string portion shown by the wrapper.
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared test-helper module; not every item is used in every test file")]
 mod common;
 
 use common::x_bin;

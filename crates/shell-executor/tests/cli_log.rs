@@ -8,7 +8,7 @@
 //! Exit-code propagation is intentionally NOT asserted here — that surface is
 //! owned by `tests/cli_exit_code.rs`. These tests only inspect log contents.
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared test helpers; not every item is used in this file")]
 mod common;
 
 use common::{fresh_temp_path, x_bin};

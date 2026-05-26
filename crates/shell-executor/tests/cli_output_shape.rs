@@ -21,7 +21,7 @@
 //! so all assertions use `contains` against ANSI-free substrings. We never
 //! index lines positionally — the carriage-return prefix would defeat that.
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared test helpers; not every item is used by every test file")]
 mod common;
 
 use common::x_bin;

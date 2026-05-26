@@ -15,7 +15,7 @@
 //! These assertions check only externally observable output, so they survive
 //! refactors of the internal printing pipeline.
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "common module is used via `use common::x_bin` but Rust's dead_code lint fires on mod declarations in integration test files")]
 mod common;
 
 use common::x_bin;

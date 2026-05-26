@@ -25,13 +25,14 @@ fn x_bin_path() -> &'static str {
 /// to send keystrokes (e.g. `q` to a TUI that didn't auto-exit). For
 /// these smoke tests every command finishes on its own so writing is not
 /// needed.
-fn spawn_in_pty(
-    args: &[&str],
-) -> (
+type PtySpawn = (
     Box<dyn Child + Send + Sync>,
     Box<dyn MasterPty + Send>,
     Receiver<Vec<u8>>,
-) {
+);
+
+#[allow(clippy::expect_used, reason = "test helper — panic on PTY setup failure is intentional")]
+fn spawn_in_pty(args: &[&str]) -> PtySpawn {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -66,13 +67,12 @@ fn spawn_in_pty(
         let mut buf = [0u8; 4096];
         loop {
             match std::io::Read::read(&mut reader, &mut buf) {
-                Ok(0) => break,
+                Ok(0) | Err(_) => break,
                 Ok(n) => {
                     if tx.send(buf[..n].to_vec()).is_err() {
                         break;
                     }
                 }
-                Err(_) => break,
             }
         }
     });
@@ -92,8 +92,7 @@ fn drain_remaining(rx: &Receiver<Vec<u8>>, linger: Duration) -> Vec<u8> {
         }
         match rx.recv_timeout(remaining) {
             Ok(chunk) => out.extend_from_slice(&chunk),
-            Err(RecvTimeoutError::Timeout) => break,
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => break,
         }
     }
     out
@@ -105,7 +104,7 @@ fn wait_for_exit(child: &mut (dyn Child + Send + Sync), deadline: Duration) -> O
     let end = Instant::now() + deadline;
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return Some(status.exit_code() as i32),
+            Ok(Some(status)) => return Some(i32::try_from(status.exit_code()).unwrap_or(-1)),
             Ok(None) => {}
             Err(_) => return None,
         }

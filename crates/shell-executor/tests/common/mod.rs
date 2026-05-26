@@ -55,7 +55,7 @@ pub fn strip_ansi(s: &str) -> String {
                 }
             }
         } else {
-            out.push(bytes[i] as char);
+            out.push(char::from(bytes[i]));
             i += 1;
         }
     }
@@ -64,13 +64,13 @@ pub fn strip_ansi(s: &str) -> String {
 
 /// Capture stdout+stderr of a finished `Command`, return them as `String`s plus
 /// the exit code. Convenience wrapper around `.output()` + `from_utf8_lossy`.
-pub fn run_and_capture(mut cmd: Command) -> CapturedOutput {
-    let output = cmd.output().expect("failed to run command");
-    CapturedOutput {
+pub fn run_and_capture(mut cmd: Command) -> Result<CapturedOutput, std::io::Error> {
+    let output = cmd.output()?;
+    Ok(CapturedOutput {
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         exit_code: output.status.code(),
-    }
+    })
 }
 
 pub struct CapturedOutput {

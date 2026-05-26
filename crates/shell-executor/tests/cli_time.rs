@@ -4,7 +4,7 @@
 //! segment (`[ ✓ ] message`). Passing `--time` brings the segment back
 //! (`[ ✓ 00:00:00 ] message`).
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "common mod is a shared test helper; not every item is used in this file")]
 mod common;
 
 use common::x_bin;

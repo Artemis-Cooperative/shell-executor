@@ -1,6 +1,6 @@
 //! CLI integration tests for the `--parallel` flag on the `x` binary.
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared test helper module; not every item is used in this file")]
 mod common;
 
 use common::{fresh_temp_path, x_bin};

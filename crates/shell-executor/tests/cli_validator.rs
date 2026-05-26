@@ -4,7 +4,7 @@
 //! main command's exit code when determining overall pass/fail — except when
 //! the main command timed out or was interrupted by a signal.
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared test helper module; not all helpers are used in every test file")]
 mod common;
 
 use common::{fresh_temp_path, x_bin};

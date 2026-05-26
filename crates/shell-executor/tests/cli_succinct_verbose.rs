@@ -8,7 +8,7 @@
 //!   Note: `-v` is NOT a short alias for `--verbose` because `-v` is taken by
 //!   `--validator`. `--verbose` is long-only.
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "shared test helpers; not every item is used by this file")]
 mod common;
 
 use common::x_bin;

@@ -400,6 +400,7 @@ enum LoopOutcome {
     Errored,
 }
 
+#[allow(clippy::too_many_lines, reason = "event loop is a single cohesive state machine; splitting it would obscure control flow without improving clarity")]
 fn event_loop(panes: &mut [Pane], parent_label: &str, show_time: bool) -> io::Result<LoopOutcome> {
     let mut terminal = ratatui::init();
     let mut stdout = io::stdout();
@@ -623,6 +624,7 @@ fn nav_key(key: KeyEvent, n: usize) -> Option<NavAction> {
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "single-pass TUI render; splitting would require threading state through multiple small helpers with no clarity gain")]
 fn draw_frame(
     frame: &mut Frame,
     panes: &[Pane],

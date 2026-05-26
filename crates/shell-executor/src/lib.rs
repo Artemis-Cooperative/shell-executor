@@ -46,11 +46,15 @@ pub struct CommandOutput {
 ///     .run();
 /// assert!(ok);
 /// ```
+/// Predicate used to determine whether a command's output should be
+/// considered successful.
+type SuccessFn = Box<dyn Fn(&CommandOutput) -> bool>;
+
 pub struct ShellCommand {
     command: String,
     message: Option<String>,
     timeout: Option<Duration>,
-    success: Option<Box<dyn Fn(&CommandOutput) -> bool>>,
+    success: Option<SuccessFn>,
     quiet: bool,
     max_output: usize,
     log: Option<PathBuf>,
@@ -334,6 +338,7 @@ impl ShellCommand {
     /// Behaves identically to [`run_status`](ShellCommand::run_status) in terms
     /// of spinner, printing, and logging, but additionally surfaces the exit
     /// code so callers can propagate it (for example, to the OS).
+    #[allow(clippy::too_many_lines, reason = "single cohesive execution pipeline; splitting would obscure the control flow")]
     pub fn run_report(self) -> RunReport {
         let display_message = derive_display_message(self.message.as_ref(), &self.command);
 
@@ -727,11 +732,13 @@ pub(crate) fn read_bounded(reader: impl Read, limit: usize) -> String {
     clippy::expect_used,
     reason = "command presence already validated upstream by clap conflicts_with"
 )]
+#[allow(clippy::too_many_lines, reason = "x_main is a single CLI entry point that parses args and dispatches to all execution modes; splitting it would obscure the top-level flow without reducing actual complexity")]
 pub fn x_main() -> i32 {
     use clap::Parser;
 
     #[derive(Parser)]
     #[command(name = "x", about = "Execute a shell command with a spinner")]
+    #[allow(clippy::struct_excessive_bools, reason = "CLI flags are inherently boolean; refactoring into an enum would obscure clap argument semantics")]
     struct Cli {
         /// The shell command to execute (omit if using --parallel).
         command: Option<String>,

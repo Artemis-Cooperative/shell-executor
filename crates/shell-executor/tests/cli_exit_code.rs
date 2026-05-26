@@ -9,7 +9,7 @@
 //! - Signal-killed main: non-zero (specific value left to the implementer;
 //!   reasonable choices include 1, or 128 + signum a la POSIX shells)
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "test helper module; not all symbols are used by every test file")]
 mod common;
 
 use common::{fresh_temp_path, x_bin};
