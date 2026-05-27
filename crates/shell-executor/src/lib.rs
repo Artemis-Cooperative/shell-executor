@@ -10,8 +10,11 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 mod interactive;
+mod outcome;
 mod parallel;
 mod tui;
+
+use outcome::{Outcome, OutputCapture};
 
 pub use parallel::{parallel, ParallelGroup};
 
@@ -399,7 +402,8 @@ impl ShellCommand {
             std::thread::sleep(Duration::from_millis(100));
         }
 
-        let final_time = format_elapsed(start.elapsed());
+        let elapsed = start.elapsed();
+        let final_time = format_elapsed(elapsed);
 
         let (output, signal_num) = if timed_out {
             (
@@ -458,6 +462,16 @@ impl ShellCommand {
             }
         };
 
+        let status = if timed_out {
+            RunStatus::Timeout
+        } else if interrupted {
+            RunStatus::Interrupted
+        } else if success {
+            RunStatus::Success
+        } else {
+            RunStatus::Failure
+        };
+
         let time_slot = if self.show_time {
             format!(" {final_time}")
         } else {
@@ -471,7 +485,7 @@ impl ShellCommand {
             println!("\r[ \x1b[31m✘\x1b[0m{time_slot} ] {display_message}");
         }
 
-        if !success || !self.quiet {
+        if outcome::should_include_body(status, self.quiet) {
             let combined = format!("{}{}", output.stdout, output.stderr);
             let trimmed = combined.trim();
             if !trimmed.is_empty() {
@@ -494,8 +508,7 @@ impl ShellCommand {
 
             let mut entry = format!("[{timestamp}] [ {icon} {final_time} ] {display_message}\n");
 
-            let should_include_output = !success || !self.quiet;
-            if should_include_output {
+            if outcome::should_include_body(status, self.quiet) {
                 let combined = format!("{}{}", output.stdout, output.stderr);
                 let trimmed = combined.trim();
                 if !trimmed.is_empty() {
@@ -516,23 +529,18 @@ impl ShellCommand {
             }
         }
 
-        let status = if timed_out {
-            RunStatus::Timeout
-        } else if interrupted {
-            RunStatus::Interrupted
-        } else if success {
-            RunStatus::Success
-        } else {
-            RunStatus::Failure
+        let outcome = Outcome {
+            status,
+            output: OutputCapture::Captured(output),
+            elapsed,
+            label: display_message,
+            signal_num,
         };
 
-        let exit_code = match status {
-            RunStatus::Timeout => 124,
-            RunStatus::Interrupted => signal_num.map_or(1, |n| 128 + n),
-            RunStatus::Success | RunStatus::Failure => output.exit_code,
-        };
-
-        RunReport { status, exit_code }
+        RunReport {
+            status: outcome.status,
+            exit_code: outcome::exit_code(&outcome),
+        }
     }
 
     /// Execute the command with inherited stdio (no spinner, no wrapper).

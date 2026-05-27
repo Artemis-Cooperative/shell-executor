@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
+use crate::outcome::{Outcome, OutputCapture};
 use crate::{format_elapsed, RunReport, RunStatus};
 
 struct RawModeGuard;
@@ -218,8 +219,22 @@ pub(crate) fn run_interactive_report(
         thread::sleep(Duration::from_millis(50));
     };
 
-    let final_time = format_elapsed(start.elapsed());
+    let elapsed = start.elapsed();
+    let final_time = format_elapsed(elapsed);
     let success = exit_code == 0;
+    let status = if success {
+        RunStatus::Success
+    } else {
+        RunStatus::Failure
+    };
+
+    let outcome = Outcome {
+        status,
+        output: OutputCapture::Inherited,
+        elapsed,
+        label: display_message.to_string(),
+        signal_num: None,
+    };
 
     // Exit alt screen first (so the status line lands on the main screen
     // where the user typed the command), then disable raw mode so println
@@ -232,7 +247,7 @@ pub(crate) fn run_interactive_report(
     } else {
         String::new()
     };
-    if success {
+    if matches!(outcome.status, RunStatus::Success) {
         println!("[ \x1b[32m✓\x1b[0m{time_slot} ] {display_message}");
     } else {
         println!("[ \x1b[31m✘\x1b[0m{time_slot} ] {display_message}");
@@ -241,7 +256,11 @@ pub(crate) fn run_interactive_report(
     if let Some(log_path) = log {
         let now = chrono::Local::now();
         let timestamp = now.format("%Y-%m-%d %H:%M:%S");
-        let icon = if success { "✓" } else { "✘" };
+        let icon = if matches!(outcome.status, RunStatus::Success) {
+            "✓"
+        } else {
+            "✘"
+        };
         let entry = format!("[{timestamp}] [ {icon} {final_time} ] {display_message}\n");
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
@@ -253,11 +272,7 @@ pub(crate) fn run_interactive_report(
     }
 
     RunReport {
-        status: if success {
-            RunStatus::Success
-        } else {
-            RunStatus::Failure
-        },
+        status: outcome.status,
         exit_code,
     }
 }

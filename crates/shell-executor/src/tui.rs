@@ -35,9 +35,8 @@ use ratatui::widgets::{
 use ratatui::Frame;
 use vt100::Parser;
 
-use crate::parallel::{
-    compute_parent_status, print_final_block, status_to_exit_code, write_log_entry, ChildState,
-};
+use crate::outcome::{self, Outcome, OutputCapture};
+use crate::parallel::{print_final_block, write_log_entry};
 use crate::{derive_display_message, CommandOutput, RunReport, RunStatus};
 
 const SCROLLBACK_LINES: usize = 10_000;
@@ -140,32 +139,23 @@ pub(crate) fn run_report(
 
     let group_elapsed = group_start.elapsed();
 
-    // Convert panes -> ChildState for the parallel-style final block.
-    let states = panes
-        .iter()
-        .map(|p| Arc::new(Mutex::new(pane_to_done_state(p))))
-        .collect::<Vec<_>>();
-    let child_labels: Vec<String> = panes.iter().map(|p| p.label.clone()).collect();
-    let parent_status = compute_parent_status(&states);
+    let child_outcomes: Vec<Outcome> = panes.iter().map(pane_to_outcome).collect();
+    let parent_status = outcome::aggregate(&child_outcomes);
+    let parent_outcome = Outcome {
+        status: parent_status,
+        output: OutputCapture::Inherited,
+        elapsed: group_elapsed,
+        label: parent_label.clone(),
+        signal_num: None,
+    };
 
-    print_final_block(
-        &states,
-        &parent_label,
-        &child_labels,
-        parent_status,
-        group_elapsed,
-        show_time,
-        quiet,
-    );
+    print_final_block(&parent_outcome, &child_outcomes, show_time, quiet);
 
     if let Some(log_path) = log {
         write_log_entry(
             log_path,
-            &states,
-            &parent_label,
-            &child_labels,
-            parent_status,
-            group_elapsed,
+            &parent_outcome,
+            &child_outcomes,
             quiet,
             /* include_bodies = */ true,
         );
@@ -173,7 +163,7 @@ pub(crate) fn run_report(
 
     RunReport {
         status: parent_status,
-        exit_code: status_to_exit_code(parent_status),
+        exit_code: outcome::exit_code(&parent_outcome),
     }
 }
 
@@ -246,21 +236,21 @@ pub(crate) fn run_succinct_report(
     }
     let group_elapsed = group_start.elapsed();
 
-    let states = panes
-        .iter()
-        .map(|p| Arc::new(Mutex::new(pane_to_done_state(p))))
-        .collect::<Vec<_>>();
-    let child_labels: Vec<String> = panes.iter().map(|p| p.label.clone()).collect();
-    let parent_status = compute_parent_status(&states);
+    let child_outcomes: Vec<Outcome> = panes.iter().map(pane_to_outcome).collect();
+    let parent_status = outcome::aggregate(&child_outcomes);
+    let parent_outcome = Outcome {
+        status: parent_status,
+        output: OutputCapture::Inherited,
+        elapsed: group_elapsed,
+        label: parent_label.clone(),
+        signal_num: None,
+    };
 
     if let Some(log_path) = log {
         write_log_entry(
             log_path,
-            &states,
-            &parent_label,
-            &child_labels,
-            parent_status,
-            group_elapsed,
+            &parent_outcome,
+            &child_outcomes,
             quiet,
             /* include_bodies = */ false,
         );
@@ -268,7 +258,7 @@ pub(crate) fn run_succinct_report(
 
     RunReport {
         status: parent_status,
-        exit_code: status_to_exit_code(parent_status),
+        exit_code: outcome::exit_code(&parent_outcome),
     }
 }
 
@@ -1004,21 +994,23 @@ fn finalize_pane_statuses(panes: &mut [Pane]) {
     }
 }
 
-fn pane_to_done_state(p: &Pane) -> ChildState {
+fn pane_to_outcome(p: &Pane) -> Outcome {
     let (status, exit_code) = match p.status {
         PaneStatus::Done(s, c) => (s, c),
         PaneStatus::Running => (RunStatus::Interrupted, 1),
     };
     let elapsed = p.elapsed();
     let body = pane_text_dump(&p.parser);
-    ChildState::Done {
+    Outcome {
         status,
-        output: CommandOutput {
+        output: OutputCapture::Captured(CommandOutput {
             stdout: body,
             stderr: String::new(),
             exit_code,
-        },
+        }),
         elapsed,
+        label: p.label.clone(),
+        signal_num: None,
     }
 }
 

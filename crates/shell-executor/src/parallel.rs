@@ -9,12 +9,13 @@
 
 use std::fmt::Write as _;
 use std::io::{stdout, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::outcome::{self, Outcome, OutputCapture};
 use crate::{
     derive_display_message, format_elapsed, read_bounded, CommandOutput, RunReport, RunStatus,
 };
@@ -134,7 +135,7 @@ impl ParallelGroup {
             .collect();
 
         let start = Instant::now();
-        let handles = self.spawn_workers(&states);
+        let handles = self.spawn_workers(&states, &child_labels);
 
         // Reserve N+1 lines for in-place rendering, position cursor at parent line.
         for _ in 0..=n {
@@ -149,7 +150,7 @@ impl ParallelGroup {
         loop {
             let all_done = states
                 .iter()
-                .all(|s| matches!(&*s.lock().unwrap(), ChildState::Done { .. }));
+                .all(|s| matches!(&*s.lock().unwrap(), ChildState::Done(_)));
             if all_done {
                 break;
             }
@@ -176,39 +177,29 @@ impl ParallelGroup {
         }
 
         let group_elapsed = start.elapsed();
-        let parent_status = compute_parent_status(&states);
+        let child_outcomes = collect_child_outcomes(&states);
+        let parent = synthesize_parent(parent_label, &child_outcomes, group_elapsed);
 
         // Cursor is at start of parent line. Erase the in-place region and
         // re-render as a static block with per-child output below each child.
         print!("\x1b[J");
         let _ = stdout().flush();
 
-        print_final_block(
-            &states,
-            &parent_label,
-            &child_labels,
-            parent_status,
-            group_elapsed,
-            self.show_time,
-            self.quiet,
-        );
+        print_final_block(&parent, &child_outcomes, self.show_time, self.quiet);
 
         if let Some(ref log_path) = self.log {
             write_log_entry(
                 log_path,
-                &states,
-                &parent_label,
-                &child_labels,
-                parent_status,
-                group_elapsed,
+                &parent,
+                &child_outcomes,
                 self.quiet,
                 /* include_bodies = */ true,
             );
         }
 
         RunReport {
-            status: parent_status,
-            exit_code: status_to_exit_code(parent_status),
+            status: parent.status,
+            exit_code: outcome::exit_code(&parent),
         }
     }
 
@@ -236,30 +227,28 @@ impl ParallelGroup {
             .collect();
 
         let start = Instant::now();
-        let handles = self.spawn_workers(&states);
+        let handles = self.spawn_workers(&states, &child_labels);
         for h in handles {
             let _ = h.join();
         }
 
         let group_elapsed = start.elapsed();
-        let parent_status = compute_parent_status(&states);
+        let child_outcomes = collect_child_outcomes(&states);
+        let parent = synthesize_parent(parent_label, &child_outcomes, group_elapsed);
 
         if let Some(ref log_path) = self.log {
             write_log_entry(
                 log_path,
-                &states,
-                &parent_label,
-                &child_labels,
-                parent_status,
-                group_elapsed,
+                &parent,
+                &child_outcomes,
                 self.quiet,
                 /* include_bodies = */ false,
             );
         }
 
         RunReport {
-            status: parent_status,
-            exit_code: status_to_exit_code(parent_status),
+            status: parent.status,
+            exit_code: outcome::exit_code(&parent),
         }
     }
 
@@ -270,15 +259,20 @@ impl ParallelGroup {
         }
     }
 
-    fn spawn_workers(&self, states: &[Arc<Mutex<ChildState>>]) -> Vec<thread::JoinHandle<()>> {
+    fn spawn_workers(
+        &self,
+        states: &[Arc<Mutex<ChildState>>],
+        labels: &[String],
+    ) -> Vec<thread::JoinHandle<()>> {
         self.commands
             .iter()
             .enumerate()
             .map(|(i, cmd)| {
                 let cmd = cmd.clone();
+                let label = labels[i].clone();
                 let state = states[i].clone();
                 let max_output = self.max_output;
-                thread::spawn(move || run_child(cmd, state, max_output))
+                thread::spawn(move || run_child(cmd, label, state, max_output))
             })
             .collect()
     }
@@ -286,18 +280,52 @@ impl ParallelGroup {
 
 pub(crate) enum ChildState {
     Running,
-    Done {
-        status: RunStatus,
-        output: CommandOutput,
-        elapsed: Duration,
-    },
+    Done(Outcome),
+}
+
+/// Drain the per-child mutex-protected `ChildState`s into a `Vec<Outcome>`.
+///
+/// Any child still in `Running` (which shouldn't happen post-join) is
+/// synthesized as a failed Outcome to keep aggregation/exit-code logic total.
+fn collect_child_outcomes(states: &[Arc<Mutex<ChildState>>]) -> Vec<Outcome> {
+    states
+        .iter()
+        .map(|s| {
+            let mut guard = s.lock().unwrap();
+            match std::mem::replace(&mut *guard, ChildState::Running) {
+                ChildState::Done(o) => o,
+                ChildState::Running => Outcome {
+                    status: RunStatus::Failure,
+                    output: OutputCapture::Captured(CommandOutput {
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        exit_code: 1,
+                    }),
+                    elapsed: Duration::ZERO,
+                    label: String::new(),
+                    signal_num: None,
+                },
+            }
+        })
+        .collect()
+}
+
+fn synthesize_parent(label: String, children: &[Outcome], elapsed: Duration) -> Outcome {
+    let status = outcome::aggregate(children);
+    Outcome {
+        status,
+        output: OutputCapture::Inherited,
+        elapsed,
+        label,
+        signal_num: None,
+    }
 }
 
 #[expect(
     clippy::needless_pass_by_value,
     reason = "ownership crosses the spawned-thread boundary"
 )]
-fn run_child(cmd: String, state: Arc<Mutex<ChildState>>, max_output: usize) {
+fn run_child(cmd: String, label: String, state: Arc<Mutex<ChildState>>, max_output: usize) {
     let start = Instant::now();
 
     let mut child = match Command::new("sh")
@@ -309,15 +337,17 @@ fn run_child(cmd: String, state: Arc<Mutex<ChildState>>, max_output: usize) {
     {
         Ok(c) => c,
         Err(e) => {
-            *state.lock().unwrap() = ChildState::Done {
+            *state.lock().unwrap() = ChildState::Done(Outcome {
                 status: RunStatus::Failure,
-                output: CommandOutput {
+                output: OutputCapture::Captured(CommandOutput {
                     stdout: String::new(),
                     stderr: format!("Failed to spawn command: {e}"),
                     exit_code: 1,
-                },
+                }),
                 elapsed: start.elapsed(),
-            };
+                label,
+                signal_num: None,
+            });
             return;
         }
     };
@@ -374,15 +404,17 @@ fn run_child(cmd: String, state: Arc<Mutex<ChildState>>, max_output: usize) {
         raw_exit
     };
 
-    *state.lock().unwrap() = ChildState::Done {
+    *state.lock().unwrap() = ChildState::Done(Outcome {
         status,
-        output: CommandOutput {
+        output: OutputCapture::Captured(CommandOutput {
             stdout: stdout_str,
             stderr: stderr_str,
             exit_code,
-        },
+        }),
         elapsed,
-    };
+        label,
+        signal_num,
+    });
 }
 
 fn render_in_place(
@@ -414,12 +446,10 @@ fn render_in_place(
                     };
                     (spinner_char.to_string(), ts)
                 }
-                ChildState::Done {
-                    status, elapsed, ..
-                } => {
-                    let icon = colored_icon(*status);
+                ChildState::Done(outcome) => {
+                    let icon = colored_icon(outcome.status);
                     let ts = if show_time {
-                        format!(" {}", format_elapsed(*elapsed))
+                        format!(" {}", format_elapsed(outcome.elapsed))
                     } else {
                         String::new()
                     };
@@ -434,101 +464,86 @@ fn render_in_place(
 }
 
 pub(crate) fn print_final_block(
-    states: &[Arc<Mutex<ChildState>>],
-    parent_label: &str,
-    child_labels: &[String],
-    parent_status: RunStatus,
-    group_elapsed: Duration,
+    parent: &Outcome,
+    children: &[Outcome],
     show_time: bool,
     quiet: bool,
 ) {
-    let parent_icon = colored_icon(parent_status);
+    let parent_icon = colored_icon(parent.status);
     let parent_ts = if show_time {
-        format!(" {}", format_elapsed(group_elapsed))
+        format!(" {}", format_elapsed(parent.elapsed))
     } else {
         String::new()
     };
-    println!("[ {parent_icon}{parent_ts} ] {parent_label}");
+    println!("[ {parent_icon}{parent_ts} ] {}", parent.label);
 
-    for (i, label) in child_labels.iter().enumerate() {
-        let state = states[i].lock().unwrap();
-        let ChildState::Done {
-            status,
-            output,
-            elapsed,
-        } = &*state
-        else {
-            continue;
-        };
-        let icon = colored_icon(*status);
+    for child in children {
+        let icon = colored_icon(child.status);
         let ts = if show_time {
-            format!(" {}", format_elapsed(*elapsed))
+            format!(" {}", format_elapsed(child.elapsed))
         } else {
             String::new()
         };
-        println!("    [ {icon}{ts} ] {label}");
+        println!("    [ {icon}{ts} ] {}", child.label);
 
-        let show_output = !matches!(status, RunStatus::Success) || !quiet;
-        if show_output {
-            let combined = format!("{}{}", output.stdout, output.stderr);
-            let trimmed = combined.trim();
-            if !trimmed.is_empty() {
-                for line in trimmed.lines() {
-                    println!("        {line}");
-                }
+        if !outcome::should_include_body(child.status, quiet) {
+            continue;
+        }
+        let OutputCapture::Captured(ref body) = child.output else {
+            continue;
+        };
+        let combined = format!("{}{}", body.stdout, body.stderr);
+        let trimmed = combined.trim();
+        if !trimmed.is_empty() {
+            for line in trimmed.lines() {
+                println!("        {line}");
             }
         }
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "write_log_entry aggregates many independent log fields"
-)]
 pub(crate) fn write_log_entry(
-    log_path: &PathBuf,
-    states: &[Arc<Mutex<ChildState>>],
-    parent_label: &str,
-    child_labels: &[String],
-    parent_status: RunStatus,
-    group_elapsed: Duration,
+    log_path: &Path,
+    parent: &Outcome,
+    children: &[Outcome],
     quiet: bool,
     include_bodies: bool,
 ) {
     let now = chrono::Local::now();
     let timestamp = now.format("%Y-%m-%d %H:%M:%S");
-    let parent_icon = plain_icon(parent_status);
+    let parent_icon = plain_icon(parent.status);
     let mut entry = format!(
-        "[{timestamp}] [ {parent_icon} {} ] {parent_label}\n",
-        format_elapsed(group_elapsed)
+        "[{timestamp}] [ {parent_icon} {} ] {}\n",
+        format_elapsed(parent.elapsed),
+        parent.label
     );
 
-    for (i, label) in child_labels.iter().enumerate() {
-        let state = states[i].lock().unwrap();
-        let ChildState::Done {
-            status,
-            output,
-            elapsed,
-        } = &*state
-        else {
+    for child in children {
+        let icon = plain_icon(child.status);
+        entry.push('\t');
+        let _ = writeln!(
+            entry,
+            "[ {icon} {} ] {}",
+            format_elapsed(child.elapsed),
+            child.label
+        );
+
+        if !include_bodies {
+            continue;
+        }
+        if !outcome::should_include_body(child.status, quiet) {
+            continue;
+        }
+        let OutputCapture::Captured(ref body) = child.output else {
             continue;
         };
-        let icon = plain_icon(*status);
-        entry.push('\t');
-        let _ = writeln!(entry, "[ {icon} {} ] {label}", format_elapsed(*elapsed));
-
-        if include_bodies {
-            let show_output = !matches!(status, RunStatus::Success) || !quiet;
-            if show_output {
-                let combined = format!("{}{}", output.stdout, output.stderr);
-                let trimmed = combined.trim();
-                if !trimmed.is_empty() {
-                    for line in trimmed.lines() {
-                        entry.push_str("\t\t");
-                        entry.push_str(line);
-                        entry.push('\n');
-                    }
-                }
+        let combined = format!("{}{}", body.stdout, body.stderr);
+        let trimmed = combined.trim();
+        if !trimmed.is_empty() {
+            for line in trimmed.lines() {
+                entry.push_str("\t\t");
+                entry.push_str(line);
+                entry.push('\n');
             }
         }
     }
@@ -556,32 +571,6 @@ fn plain_icon(status: RunStatus) -> &'static str {
         RunStatus::Failure | RunStatus::Timeout => "✘",
         RunStatus::Interrupted => "INTERRUPTED",
     }
-}
-
-pub(crate) fn compute_parent_status(states: &[Arc<Mutex<ChildState>>]) -> RunStatus {
-    let mut any_interrupted = false;
-    let mut all_success = true;
-    for s in states {
-        match &*s.lock().unwrap() {
-            ChildState::Done { status, .. } => match status {
-                RunStatus::Interrupted => any_interrupted = true,
-                RunStatus::Success => {}
-                _ => all_success = false,
-            },
-            ChildState::Running => all_success = false,
-        }
-    }
-    if any_interrupted {
-        RunStatus::Interrupted
-    } else if all_success {
-        RunStatus::Success
-    } else {
-        RunStatus::Failure
-    }
-}
-
-pub(crate) fn status_to_exit_code(status: RunStatus) -> i32 {
-    i32::from(!matches!(status, RunStatus::Success))
 }
 
 #[cfg(test)]
